@@ -1,0 +1,47 @@
+[build-system]
+requires = ["hatchling>=1.24"]
+build-backend = "hatchling.build"
+
+[project]
+name = "arango-byoc-deploy"
+dynamic = ["version"]
+description = "Package-agnostic BYOC deployment for the Arango Container Manager: pre-flight, upload, swap, verify, roll back."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Arthur Keen", email = "arthur@arangodb.com" }]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "License :: OSI Approved :: MIT License",
+  "Topic :: Software Development :: Build Tools",
+]
+# Deliberately tiny: this runs on a developer machine or CI, never in the pod.
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff==0.16.4"]
+
+[project.scripts]
+arango-byoc-deploy = "arango_byoc_deploy.cli:main"
+
+[project.urls]
+Repository = "https://github.com/arango-solutions/arango-byoc-deploy"
+
+[tool.hatch.version]
+path = "src/arango_byoc_deploy/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/arango_byoc_deploy"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

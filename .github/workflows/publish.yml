@@ -1,0 +1,120 @@
+name: Publish to PyPI
+
+# Publishes arango-byoc-deploy to PyPI (or TestPyPI) via Trusted Publishing (OIDC)
+# — no long-lived API tokens. Mirrors arango-schema-analyzer / arango-query-core
+# for estate consistency.
+#
+# How to trigger:
+#   * PyPI release   — push a tag matching v*.*.* (e.g. v0.2.0)
+#                      OR run via workflow_dispatch with target=pypi
+#   * TestPyPI dry run — run via workflow_dispatch with target=testpypi
+#
+# ⚠️ VERIFY CREDENTIALS BEFORE TAGGING. A tag you cannot publish is a version
+# number you have burned. The Trusted-Publisher binding is
+# owner/repo/workflow/environment-EXACT — arango-schema-analyzer's publishing
+# broke the day its repo was renamed because PyPI's entry no longer matched the
+# OIDC token's `repository` (see that repo's RELEASING.md). So do a TestPyPI
+# workflow_dispatch dry run FIRST and confirm a green upload, THEN tag.
+#
+# One-time setup (see RELEASING.md):
+#   1. PyPI (and TestPyPI) → add a Trusted Publisher / pending publisher:
+#        PyPI project name: arango-byoc-deploy
+#        Owner:             ArthurKeen        # we publish from ArthurKeen (guard below)
+#        Repository name:   arango-byoc-deploy
+#        Workflow name:     publish.yml
+#        Environment:       pypi              # (or testpypi on test.pypi.org)
+#   2. This repo → Settings → Environments → create `pypi` (and `testpypi`).
+#      No secrets required with Trusted Publishing.
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Where to publish"
+        required: true
+        default: "testpypi" # default the manual run to the SAFE dry-run target
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build sdist + wheel
+    runs-on: ubuntu-latest
+    # Only the canonical publishing repo builds/publishes. The dual-push mirror
+    # to arango-solutions/arango-byoc-deploy is NOT a registered Trusted Publisher,
+    # so its upload would fail every release; skipping here cascades to the
+    # publish jobs (they `needs: build`), making the mirror a clean no-op.
+    if: github.repository == 'ArthurKeen/arango-byoc-deploy'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]" build twine
+      # Same deterministic, no-network gate as ci.yml's unit job — never publish
+      # a build that can't pass the committed test floor.
+      - run: pytest --tb=short -q
+      - run: python -m build
+      # Fails early if a direct URL (git+) dependency ever slips back in — such a
+      # wheel would be rejected at upload time. (--strict also fails on bad metadata.)
+      - run: python -m twine check --strict dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: build
+    if: >-
+      github.repository == 'ArthurKeen/arango-byoc-deploy'
+      && (github.event_name == 'push'
+      || (github.event_name == 'workflow_dispatch' && inputs.target == 'pypi'))
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/arango-byoc-deploy/
+    permissions:
+      id-token: write # required for Trusted Publishing (OIDC)
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # A re-run for an already-published version (e.g. a dispatch to confirm
+          # OIDC works) is a no-op success instead of a "400 File already exists".
+          skip-existing: true
+
+  publish-testpypi:
+    name: Publish to TestPyPI (dry run)
+    needs: build
+    if: >-
+      github.repository == 'ArthurKeen/arango-byoc-deploy'
+      && github.event_name == 'workflow_dispatch'
+      && inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/project/arango-byoc-deploy/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          skip-existing: true
