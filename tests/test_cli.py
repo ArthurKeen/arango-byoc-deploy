@@ -142,3 +142,36 @@ def test_preflight_needs_no_cluster_credentials(tmp_path: Path, capsys: pytest.C
 
     assert code == 0, capsys.readouterr().err
     assert "pre-flight OK" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("build", "release"), [("3.0.0-4", "3.0.0"), ("1.2.0-rc1-2", "1.2.0-rc1"), ("0.5.2", None)]
+)
+def test_release_of_a_build(build: str, release: str | None) -> None:
+    """A rollback verifies the target's release; a plain-version build cannot be checked."""
+    from arango_byoc_deploy.cli import release_of
+
+    assert release_of(build) == release
+
+
+def test_a_legacy_rollback_that_serves_exits_unverified(tmp_path: Path) -> None:
+    """NFR-22 (agentic-graph-analytics): serving is not proof of which build is live."""
+    from arango_byoc_deploy import cli
+    from tests.test_platform_and_verify import FakeSession, _response
+
+    (tmp_path / "arango-byoc.toml").write_text(
+        'app-name = "a"\ninstance = "inst"\ndatabase = "AIM"\nhas-ui = false\n'
+        'version-probe = { path = "/healthz", json-key = "version" }\n'
+    )
+    (tmp_path / ".env").write_text("ARANGO_URL=https://cluster.example\nARANGO_USER=u\nARANGO_PASSWORD=p\n")
+    args = cli.build_parser().parse_args(["--repo", str(tmp_path), "verify"])
+    ctx = cli._Context(args)
+    fake = FakeSession()
+    fake.route("POST", "/_open/auth", _response(200, {"jwt": "t"}))
+    fake.route("GET", "/inst/health", _response(200, {"status": "ok"}))
+    fake.route("GET", "/inst/healthz", _response(200, {"version": "0.1.0"}))
+    ctx.platform.session = fake  # type: ignore[assignment]
+
+    code = cli._verify(ctx, args, None, unverifiable=True)
+
+    assert code == cli.EXIT_UNVERIFIED

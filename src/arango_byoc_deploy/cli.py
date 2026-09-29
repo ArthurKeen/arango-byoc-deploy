@@ -158,7 +158,25 @@ def release_version(
     raise DeployError("no release version: pass --version, or set [project].version in pyproject.toml")
 
 
-def _verify(ctx: _Context, args: argparse.Namespace, expect_version: str | None = None) -> int:
+#: Exit code for a deploy that serves but whose build cannot be proven live.
+EXIT_UNVERIFIED = 2
+
+
+def release_of(build: str) -> str | None:
+    """``3.0.0-4`` -> ``3.0.0``; ``None`` for a build without a ``-<n>`` suffix.
+
+    Builds uploaded by this tool are ``<release>-<n>`` and the service reports
+    ``<release>``, so a rollback can be checked. An older plain-version build
+    (``0.5.2``) may predate the version endpoint, so nothing can confirm which
+    one is live — ``None`` makes that explicit instead of guessing.
+    """
+    head, sep, tail = build.rpartition("-")
+    return head if sep and head and tail.isdigit() else None
+
+
+def _verify(
+    ctx: _Context, args: argparse.Namespace, expect_version: str | None = None, *, unverifiable: bool = False
+) -> int:
     ready = ctx.url + ctx.config.effective_ready_path.lstrip("/")
     print(f"==> polling {ready}")
     answered = verify.poll_until_serving(
@@ -168,11 +186,23 @@ def _verify(ctx: _Context, args: argparse.Namespace, expect_version: str | None 
         print(f"error: {ready} never returned 200 within {args.wait_timeout:.0f}s", file=sys.stderr)
         return 1
     result = verify.deep_verify(ctx.platform, ctx.url, ctx.config, expect_version)
+    if unverifiable and result.ok:
+        for line in result.lines:
+            print(line)
+        print("    => UNVERIFIED (legacy build: it serves, but which build is live cannot be proven)")
+        return EXIT_UNVERIFIED
     result.report()
     return 0 if result.ok else 1
 
 
-def _swap(ctx: _Context, args: argparse.Namespace, version: str, expect_version: str | None = None) -> int:
+def _swap(
+    ctx: _Context,
+    args: argparse.Namespace,
+    version: str,
+    expect_version: str | None = None,
+    *,
+    unverifiable: bool = False,
+) -> int:
     """Delete-then-create, then verify — what an update *is* on this platform.
 
     A second install cannot take over the first one's Kubernetes objects, and
@@ -202,7 +232,7 @@ def _swap(ctx: _Context, args: argparse.Namespace, version: str, expect_version:
     print(f"    created {service_id} status={state}")
     ctx.platform.wait_until_ready(service_id, timeout_s=args.wait_timeout)
     print("    DEPLOYED — the pod may still be installing dependencies")
-    return _verify(ctx, args, expect_version)
+    return _verify(ctx, args, expect_version, unverifiable=unverifiable)
 
 
 # -- commands ---------------------------------------------------------------
@@ -231,6 +261,8 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for problem in problems:
             print(f"  - {problem}")
         return 1
+    for warning in preflight.secret_warnings(tarball, ctx.config):
+        print(warning, file=sys.stderr)
     print(f"pre-flight OK for {tarball.name} (mount {ctx.mount})")
     return 0
 
@@ -244,6 +276,8 @@ def cmd_release(args: argparse.Namespace) -> int:
     ctx = _Context(args)
     tarball = _tarball(ctx, args.tarball)
     preflight.require(tarball, ctx.config, ctx.db_name)
+    for warning in preflight.secret_warnings(tarball, ctx.config):
+        print(f"    {warning}", file=sys.stderr)
     print(f"    pre-flight OK ({tarball.name})")
 
     release = _release_version(ctx, args.version, tarball)
@@ -276,7 +310,13 @@ def cmd_rollback(args: argparse.Namespace) -> int:
     if args.to not in available:
         raise DeployError(f"{ctx.config.app_name} {args.to} is not uploaded. Available: {available[-10:]}")
     print(f"==> ROLLBACK to {args.to}")
-    return _swap(ctx, args, args.to)
+    # A rollback is a deploy, so it must prove which build is live, not merely
+    # that something answers.
+    release = release_of(args.to) if ctx.config.version_probe else None
+    legacy = ctx.config.version_probe is not None and release is None
+    if legacy:
+        print(f"    NOTE: {args.to} has no -<n> build suffix; its version cannot be checked (UNVERIFIED)")
+    return _swap(ctx, args, args.to, expect_version=release, unverifiable=legacy)
 
 
 def cmd_verify(args: argparse.Namespace) -> int:

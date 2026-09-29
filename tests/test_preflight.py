@@ -83,7 +83,7 @@ def test_a_baked_api_key_is_refused(tmp_path: Path) -> None:
 
     problems = check(bundle, _config(), None)
 
-    assert any("API_KEY is baked" in p for p in problems)
+    assert any("OPENAI_API_KEY baked into .env" in p for p in problems)
 
 
 def test_a_loopback_endpoint_is_refused(tmp_path: Path) -> None:
@@ -274,3 +274,17 @@ def test_an_env_rule_can_require_an_exact_value(tmp_path: Path) -> None:
 
     assert check(good, _config(env_rules=(rule,)), None) == []
     assert any("must be 'aga_workspace'" in p for p in check(bad, _config(env_rules=(rule,)), None))
+
+
+def test_an_allowed_secret_passes_but_is_named_in_a_warning(tmp_path: Path) -> None:
+    """agentic-graph-analytics bakes its LLM keys deliberately; anything unlisted is still refused."""
+    from arango_byoc_deploy.preflight import secret_warnings
+
+    bundle = _env_bundle(tmp_path, "OPENAI_API_KEY=sk-live-1\nOTHER_API_KEY=x\n")
+    cfg = _config(allow_baked_secrets=("OPENAI_API_KEY",))
+
+    problems = check(bundle, cfg, None)
+    warnings = secret_warnings(bundle, cfg)
+
+    assert len(problems) == 1 and "OTHER_API_KEY" in problems[0] and "OPENAI_API_KEY" not in problems[0]
+    assert len(warnings) == 1 and "OPENAI_API_KEY" in warnings[0] and "sk-live-1" not in warnings[0]

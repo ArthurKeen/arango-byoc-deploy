@@ -44,6 +44,31 @@ def _parse_env(text: str) -> dict[str, str]:
 _TRUTHY = {"true", "1", "yes"}
 
 
+def baked_secret_keys(env_text: str) -> list[str]:
+    """Names (never values) of every non-empty ``*_API_KEY`` in a baked .env."""
+    return sorted(set(SECRET_KEY_PATTERN.findall(env_text)))
+
+
+def secret_warnings(tarball: Path, config: AppConfig) -> list[str]:
+    """One warning per allowed secret actually baked in *tarball*."""
+    if not config.allow_baked_secrets or not tarball.is_file():
+        return []
+    try:
+        with tarfile.open(tarball, "r:gz") as archive:
+            names = {member_name(n): n for n in archive.getnames()}
+            raw = names.get(".env")
+            handle = archive.extractfile(raw) if raw else None
+            env_text = handle.read().decode("utf-8", "replace") if handle else ""
+    except (tarfile.TarError, OSError):
+        return []
+    return [
+        f"WARNING: {key} is baked into {tarball.name} (allowed by allow-baked-secrets) — "
+        "the bundle is a credential: do not commit, attach or copy it"
+        for key in baked_secret_keys(env_text)
+        if key in config.allow_baked_secrets
+    ]
+
+
 def _env_rule_problems(env: dict[str, str], config: AppConfig) -> list[str]:
     """Problems from the app's own ``env-rules`` (values are never echoed)."""
     problems: list[str] = []
@@ -126,10 +151,12 @@ def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
                 problems.append(
                     "the baked Arango endpoint points at loopback — unreachable from the platform"
                 )
-            if SECRET_KEY_PATTERN.search(env_text):
+            unlisted = [k for k in baked_secret_keys(env_text) if k not in config.allow_baked_secrets]
+            if unlisted:
                 problems.append(
-                    "an *_API_KEY is baked into .env — tarballs are uploaded and archived; "
-                    "set API keys in the Container Manager instead"
+                    f"{', '.join(unlisted)} baked into .env — tarballs are uploaded and archived; "
+                    "set API keys in the Container Manager, or list a key you must bake in "
+                    "allow-baked-secrets"
                 )
             problems.extend(_env_rule_problems(env, config))
             if config.prefix_env_var:

@@ -18,7 +18,7 @@ DATABASE_KEYS = ("ARANGO_DB", "ARANGO_DATABASE")
 
 #: Matches a baked API key line. A bundle carrying one is refused: tarballs are
 #: uploaded, archived and shared, and an LLM key has no business in one.
-SECRET_KEY_PATTERN = re.compile(r"^\s*[A-Z0-9_]*API_KEY\s*=\s*\S", re.MULTILINE)
+SECRET_KEY_PATTERN = re.compile(r"^\s*(?:export\s+)?([A-Z0-9_]*API_KEY)\s*=\s*\S", re.MULTILINE)
 
 LOOPBACK_PATTERN = re.compile(r"localhost|127\.0\.0\.1|\[::1\]", re.IGNORECASE)
 

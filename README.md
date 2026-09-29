@@ -53,6 +53,11 @@ version-source = { file = "package.json", json-key = "version" }
 # Where the live service reports its version; after `release` it must equal the release
 version-probe = { path = "/openapi.json", json-key = "info.version" }
 
+# Keys this repo must bake (the platform passes the container nothing else).
+# Anything unlisted is still refused; listed keys are named in a warning on
+# every pre-flight, because the bundle is then a credential.
+allow-baked-secrets = ["OPENAI_API_KEY"]
+
 # App-specific rules on the baked .env (values are never printed).
 [[env-rules]]
 key             = "APP_SECRET_KEY"
@@ -109,6 +114,8 @@ arango-byoc-deploy release                 # pre-flight, upload, swap, verify
 arango-byoc-deploy upload                  # pre-flight + upload only; deploy later with rollback --to
 arango-byoc-deploy verify [--expect-version X]  # prove the live service serves
 arango-byoc-deploy rollback --to 1.2.0-3   # redeploy an already-uploaded package
+# rollback verifies the target's release (1.2.0) when version-probe is set; a
+# build without a -<n> suffix can only be served-checked and exits 2 (UNVERIFIED).
 arango-byoc-deploy delete                  # remove the running service
 ```
 

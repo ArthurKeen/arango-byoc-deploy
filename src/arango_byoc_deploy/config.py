@@ -144,6 +144,10 @@ class AppConfig:
     #: report a healthy service as failed.
     ready_path: str | None = None
     env_rules: tuple[EnvRule, ...] = ()
+    #: *_API_KEY names this repo deliberately bakes (the platform passes the
+    #: container nothing else). Anything unlisted is still refused, and every
+    #: listed key is named in a warning on each pre-flight.
+    allow_baked_secrets: tuple[str, ...] = ()
     #: Page whose assets are verified, relative to the mount; default the root.
     asset_page: str | None = None
     #: Package language on the file manager: ``python`` or ``nodejs``.
@@ -224,7 +228,8 @@ def _parse_env_rules(raw: Any) -> tuple[EnvRule, ...]:
         )
         if not (rule.equals is not None or rule.forbid or rule.min_length or rule.reject_prefixes):
             raise ConfigError(
-                f"env-rules[{i}] ({rule.key}) checks nothing: set forbid, min-length or reject-prefixes"
+                f"env-rules[{i}] ({rule.key}) checks nothing: "
+                "set equals, forbid, min-length or reject-prefixes"
             )
         rules.append(rule)
     return tuple(rules)
@@ -279,6 +284,7 @@ def from_mapping(raw: dict[str, Any]) -> AppConfig:
         ready_path=raw.get("ready-path"),
         asset_page=raw.get("asset-page"),
         env_rules=_parse_env_rules(raw.get("env-rules")),
+        allow_baked_secrets=_as_tuple(raw.get("allow-baked-secrets"), "allow-baked-secrets"),
         language=str(raw.get("language", "python")),
         version_source=_parse_version_source(raw.get("version-source")),
         version_probe=_parse_version_probe(raw.get("version-probe")),
