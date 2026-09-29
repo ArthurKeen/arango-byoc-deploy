@@ -52,6 +52,8 @@ def _env_rule_problems(env: dict[str, str], config: AppConfig) -> list[str]:
             continue
         value = env.get(rule.key, "")
         why = f" — {rule.reason}" if rule.reason else ""
+        if rule.equals is not None and value.strip() != rule.equals:
+            problems.append(f"{rule.key} in the baked .env must be {rule.equals!r}{why}")
         if rule.forbid and value.strip().lower() in {v.lower() for v in rule.forbid}:
             problems.append(f"{rule.key}={value.strip()} in the baked .env is not allowed{why}")
         if rule.min_length is not None and len(value) < rule.min_length:

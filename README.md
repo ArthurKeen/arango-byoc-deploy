@@ -66,6 +66,11 @@ key    = "ALLOW_SYSTEM_RESET"
 forbid = ["true"]
 reason = "ships a system-wipe endpoint"
 
+[[env-rules]]
+key    = "ARANGO_DATABASE"
+equals = "aga_workspace"
+reason = "the product API needs its own metadata database"
+
 # Prove the app talks to the right data, not merely that it answers.
 [[probes]]
 path  = "/health"

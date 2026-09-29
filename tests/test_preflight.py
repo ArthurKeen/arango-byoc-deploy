@@ -261,3 +261,16 @@ def test_env_rule_messages_never_echo_a_secret(tmp_path: Path) -> None:
     )
 
     assert problems and "hunter2" not in problems[0]
+
+
+def test_an_env_rule_can_require_an_exact_value(tmp_path: Path) -> None:
+    """agentic-graph-analytics keeps its metadata in aga_workspace, not the analytics graph."""
+    rule = EnvRule(
+        key="ARANGO_DATABASE", equals="aga_workspace", reason="the product API's metadata database"
+    )
+    good = _env_bundle(tmp_path, "ARANGO_DATABASE=aga_workspace\n")
+    (tmp_path / "bad").mkdir()
+    bad = _env_bundle(tmp_path / "bad", "ARANGO_DATABASE=analytics\n")
+
+    assert check(good, _config(env_rules=(rule,)), None) == []
+    assert any("must be 'aga_workspace'" in p for p in check(bad, _config(env_rules=(rule,)), None))

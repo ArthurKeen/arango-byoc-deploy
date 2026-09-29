@@ -70,12 +70,14 @@ class Probe:
 class EnvRule:
     """An app-specific check on one key of the baked ``.env``.
 
-    ``forbid`` rejects listed values (case-insensitive). ``min_length`` and
+    ``equals`` requires exactly that value. ``forbid`` rejects listed values
+    (case-insensitive). ``min_length`` and
     ``reject_prefixes`` require a real secret rather than a placeholder.
     ``unless`` skips the rule when that key is truthy (``true``/``1``/``yes``).
     """
 
     key: str
+    equals: str | None = None
     forbid: tuple[str, ...] = ()
     min_length: int | None = None
     reject_prefixes: tuple[str, ...] = ()
@@ -213,13 +215,14 @@ def _parse_env_rules(raw: Any) -> tuple[EnvRule, ...]:
             raise ConfigError(f"env-rules[{i}] needs a 'key'")
         rule = EnvRule(
             key=str(item["key"]),
+            equals=item.get("equals"),
             forbid=_as_tuple(item.get("forbid"), f"env-rules[{i}].forbid"),
             min_length=item.get("min-length"),
             reject_prefixes=_as_tuple(item.get("reject-prefixes"), f"env-rules[{i}].reject-prefixes"),
             unless=item.get("unless"),
             reason=str(item.get("reason", "")),
         )
-        if not (rule.forbid or rule.min_length or rule.reject_prefixes):
+        if not (rule.equals is not None or rule.forbid or rule.min_length or rule.reject_prefixes):
             raise ConfigError(
                 f"env-rules[{i}] ({rule.key}) checks nothing: set forbid, min-length or reject-prefixes"
             )
