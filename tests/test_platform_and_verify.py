@@ -316,3 +316,50 @@ def test_expect_json_key_is_enforced(platform: tuple[Platform, FakeSession]) -> 
     )
 
     assert deep_verify(p, BASE, cfg).ok is False
+
+
+# -- live version --------------------------------------------------------------
+
+
+def _versioned(**kw) -> AppConfig:
+    from arango_byoc_deploy.config import VersionProbe
+
+    return AppConfig(
+        app_name="a",
+        instance="inst",
+        has_ui=False,
+        version_probe=VersionProbe(path="/openapi.json", json_key="info.version"),
+        **kw,
+    )
+
+
+def test_the_live_version_must_equal_the_release(platform: tuple[Platform, FakeSession]) -> None:
+    p, fake = platform
+    fake.route("GET", "/inst/openapi.json", _response(200, {"info": {"version": "0.2.0"}}))
+
+    assert deep_verify(p, BASE, _versioned(), expect_version="0.2.0").ok is True
+    assert deep_verify(p, BASE, _versioned(), expect_version="0.3.0").ok is False
+
+
+def test_an_unreadable_version_fails_only_when_one_is_demanded(
+    platform: tuple[Platform, FakeSession],
+) -> None:
+    """Demanded but unreadable means the right build cannot be proven live."""
+    p, fake = platform
+    fake.route("GET", "/inst/openapi.json", _response(404, {"detail": "Not Found"}))
+
+    assert deep_verify(p, BASE, _versioned(), expect_version="0.2.0").ok is False
+    assert deep_verify(p, BASE, _versioned()).ok is True  # rollback: reported, not asserted
+
+
+def test_upload_sends_the_configured_language(platform: tuple[Platform, FakeSession], tmp_path) -> None:
+    """worldview is Node.js; uploading it as python would be the wrong package kind."""
+    p, fake = platform
+    fake.route("POST", FILEMANAGER, _response(200, {}))
+    tarball = tmp_path / "b.tar.gz"
+    tarball.write_bytes(b"x")
+
+    p.upload(tarball, "w", "1.0-1", language="nodejs")
+
+    body = next(kw["data"] for m, url, kw in fake.calls if m == "POST" and url.endswith(FILEMANAGER))
+    assert body["language"] == "nodejs"

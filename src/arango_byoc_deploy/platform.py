@@ -130,13 +130,13 @@ class Platform:
         # another app's versions into build numbering.
         return [p for p in packages if not name or p.get("name") == name]
 
-    def upload(self, tarball: Path, name: str, version: str) -> dict:
+    def upload(self, tarball: Path, name: str, version: str, *, language: str = "python") -> dict:
         """Upload a package. The platform keys on (name, version) and rejects reuse."""
         with tarball.open("rb") as handle:
             return self._request(
                 "POST",
                 FILEMANAGER,
-                data={"name": name, "version": version, "language": "python", "type": "Service"},
+                data={"name": name, "version": version, "language": language, "type": "Service"},
                 files={"file": (tarball.name, handle, "application/gzip")},
                 timeout=600,
             )

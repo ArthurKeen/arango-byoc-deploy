@@ -53,6 +53,28 @@ class Probe:
 
 
 @dataclass(frozen=True)
+class VersionSource:
+    """Where the release number is read from.
+
+    A JSON file and key (``package.json`` / ``version``), or any text file and
+    a regex whose first group is the version (``__version__ = "(.+)"``).
+    """
+
+    file: str
+    json_key: str | None = None
+    regex: str | None = None
+
+
+@dataclass(frozen=True)
+class VersionProbe:
+    """Where the *live* service reports its version: a path plus a dotted
+    JSON key (``/openapi.json`` + ``info.version``, ``/healthz`` + ``version``)."""
+
+    path: str
+    json_key: str = "version"
+
+
+@dataclass(frozen=True)
 class AppConfig:
     """Everything one repository needs to tell the shared deployer."""
 
@@ -85,6 +107,13 @@ class AppConfig:
     #: registers no root route, so polling ``/`` would spin to timeout and
     #: report a healthy service as failed.
     ready_path: str | None = None
+    #: Package language on the file manager: ``python`` or ``nodejs``.
+    language: str = "python"
+    #: Release number source; ``None`` reads ``[project].version`` from pyproject.toml.
+    version_source: VersionSource | None = None
+    #: Live version check. After ``release`` the reported version MUST equal the
+    #: release; without one, a 200 cannot tell the new build from the old one.
+    version_probe: VersionProbe | None = None
 
     @property
     def effective_ready_path(self) -> str:
@@ -127,6 +156,25 @@ def _parse_probes(raw: Any) -> tuple[Probe, ...]:
     return tuple(probes)
 
 
+def _parse_version_source(raw: Any) -> VersionSource | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not raw.get("file"):
+        raise ConfigError("version-source needs a 'file'")
+    json_key, regex = raw.get("json-key"), raw.get("regex")
+    if bool(json_key) == bool(regex):
+        raise ConfigError("version-source needs exactly one of 'json-key' or 'regex'")
+    return VersionSource(file=str(raw["file"]), json_key=json_key, regex=regex)
+
+
+def _parse_version_probe(raw: Any) -> VersionProbe | None:
+    if raw is None:
+        return None
+    if not isinstance(raw, dict) or not raw.get("path"):
+        raise ConfigError("version-probe needs a 'path'")
+    return VersionProbe(path=str(raw["path"]), json_key=str(raw.get("json-key", "version")))
+
+
 def from_mapping(raw: dict[str, Any]) -> AppConfig:
     """Build an :class:`AppConfig` from a parsed TOML table (kebab-case keys)."""
     for key in ("app-name", "instance"):
@@ -149,6 +197,9 @@ def from_mapping(raw: dict[str, Any]) -> AppConfig:
         required_env_keys=_as_tuple(raw.get("required-env-keys"), "required-env-keys"),
         probes=_parse_probes(raw.get("probes")),
         ready_path=raw.get("ready-path"),
+        language=str(raw.get("language", "python")),
+        version_source=_parse_version_source(raw.get("version-source")),
+        version_probe=_parse_version_probe(raw.get("version-probe")),
     )
 
 

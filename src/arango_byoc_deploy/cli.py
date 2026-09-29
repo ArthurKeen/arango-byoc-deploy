@@ -18,8 +18,11 @@ from __future__ import annotations
 
 import argparse
 import glob
+import json
+import re
 import sys
 from pathlib import Path
+from typing import Any
 
 from . import __version__, preflight, verify
 from . import config as config_mod
@@ -76,10 +79,32 @@ def _tarball(ctx: _Context, explicit: str | None) -> Path:
 
 
 def _release_version(ctx: _Context, explicit: str | None) -> str:
-    """The release number: --version, else ``[project].version`` in pyproject.toml."""
+    return release_version(ctx.repo, ctx.config, explicit)
+
+
+def release_version(repo: Path, config: config_mod.AppConfig, explicit: str | None) -> str:
+    """The release number: --version, else the configured version-source, else
+    ``[project].version`` in pyproject.toml."""
     if explicit:
         return explicit
-    pyproject = ctx.repo / "pyproject.toml"
+    source = config.version_source
+    if source is not None:
+        path = repo / source.file
+        if not path.is_file():
+            raise DeployError(f"version-source file {source.file} not found under {repo}")
+        text = path.read_text(encoding="utf-8")
+        if source.json_key:
+            value: Any = json.loads(text)
+            for part in source.json_key.split("."):
+                value = value.get(part) if isinstance(value, dict) else None
+            if not value:
+                raise DeployError(f"no {source.json_key!r} in {source.file}")
+            return str(value)
+        match = re.search(source.regex or "", text, re.M)
+        if not match or not match.groups():
+            raise DeployError(f"version-source regex {source.regex!r} matched nothing in {source.file}")
+        return match.group(1)
+    pyproject = repo / "pyproject.toml"
     if pyproject.is_file():
         data = config_mod.tomllib.loads(pyproject.read_text(encoding="utf-8"))
         version = (data.get("project") or {}).get("version")
@@ -88,7 +113,7 @@ def _release_version(ctx: _Context, explicit: str | None) -> str:
     raise DeployError("no release version: pass --version, or set [project].version in pyproject.toml")
 
 
-def _verify(ctx: _Context, args: argparse.Namespace) -> int:
+def _verify(ctx: _Context, args: argparse.Namespace, expect_version: str | None = None) -> int:
     ready = ctx.url + ctx.config.effective_ready_path.lstrip("/")
     print(f"==> polling {ready}")
     answered = verify.poll_until_serving(
@@ -97,12 +122,12 @@ def _verify(ctx: _Context, args: argparse.Namespace) -> int:
     if answered is None:
         print(f"error: {ready} never returned 200 within {args.wait_timeout:.0f}s", file=sys.stderr)
         return 1
-    result = verify.deep_verify(ctx.platform, ctx.url, ctx.config)
+    result = verify.deep_verify(ctx.platform, ctx.url, ctx.config, expect_version)
     result.report()
     return 0 if result.ok else 1
 
 
-def _swap(ctx: _Context, args: argparse.Namespace, version: str) -> int:
+def _swap(ctx: _Context, args: argparse.Namespace, version: str, expect_version: str | None = None) -> int:
     """Delete-then-create, then verify — what an update *is* on this platform.
 
     A second install cannot take over the first one's Kubernetes objects, and
@@ -132,7 +157,7 @@ def _swap(ctx: _Context, args: argparse.Namespace, version: str) -> int:
     print(f"    created {service_id} status={state}")
     ctx.platform.wait_until_ready(service_id, timeout_s=args.wait_timeout)
     print("    DEPLOYED — the pod may still be installing dependencies")
-    return _verify(ctx, args)
+    return _verify(ctx, args, expect_version)
 
 
 # -- commands ---------------------------------------------------------------
@@ -180,9 +205,23 @@ def cmd_release(args: argparse.Namespace) -> int:
     version = release if args.exact else next_build_version(ctx.platform, ctx.config.app_name, release)
     size_mb = tarball.stat().st_size / 1_048_576
     print(f"==> uploading {tarball.name} ({size_mb:.1f} MB) as {ctx.config.app_name} {version}")
-    ctx.platform.upload(tarball, ctx.config.app_name, version)
+    ctx.platform.upload(tarball, ctx.config.app_name, version, language=ctx.config.language)
     print("    uploaded")
-    return _swap(ctx, args, version)
+    # The service reports its release, not the build suffix.
+    return _swap(ctx, args, version, expect_version=release)
+
+
+def cmd_upload(args: argparse.Namespace) -> int:
+    """Pre-flight and upload only; deploy later with ``rollback --to``."""
+    ctx = _Context(args)
+    tarball = _tarball(ctx, args.tarball)
+    preflight.require(tarball, ctx.config, ctx.db_name)
+    release = _release_version(ctx, args.version)
+    version = release if args.exact else next_build_version(ctx.platform, ctx.config.app_name, release)
+    print(f"==> uploading {tarball.name} as {ctx.config.app_name} {version}")
+    ctx.platform.upload(tarball, ctx.config.app_name, version, language=ctx.config.language)
+    print(f"    uploaded — deploy it with: arango-byoc-deploy rollback --to {version}")
+    return 0
 
 
 def cmd_rollback(args: argparse.Namespace) -> int:
@@ -196,7 +235,7 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    return _verify(_Context(args), args)
+    return _verify(_Context(args), args, args.expect_version)
 
 
 def cmd_delete(args: argparse.Namespace) -> int:
@@ -248,12 +287,19 @@ def build_parser() -> argparse.ArgumentParser:
         _waits(p_rel)
         p_rel.set_defaults(func=cmd_release)
 
+    p_up = sub.add_parser("upload", help="pre-flight and upload only (deploy later with rollback --to)")
+    p_up.add_argument("--tarball")
+    p_up.add_argument("--version", dest="version", help="release version (default: version-source)")
+    p_up.add_argument("--exact", action="store_true", help="use --version verbatim, no -N suffix")
+    p_up.set_defaults(func=cmd_upload)
+
     p_rb = sub.add_parser("rollback", help="redeploy an already-uploaded package")
     p_rb.add_argument("--to", required=True, help="package version, e.g. 1.2.0-3")
     _waits(p_rb)
     p_rb.set_defaults(func=cmd_rollback)
 
     p_ver = sub.add_parser("verify", help="prove the live service serves")
+    p_ver.add_argument("--expect-version", help="fail unless the live service reports this release")
     _waits(p_ver)
     p_ver.set_defaults(func=cmd_verify)
 

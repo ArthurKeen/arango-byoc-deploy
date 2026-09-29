@@ -41,6 +41,14 @@ index-html       = "ui/dist/index.html"    # checked for root-absolute assets
 prefix-env-var   = "ROOT_PATH"             # baked mount prefix to cross-check
 has-ui           = true                    # false for a bare API (no root page)
 ready-path       = "/health"               # polled after deploy; default "/" with a UI, "/health" without
+language         = "python"                # or "nodejs" (e.g. a node22base service)
+
+# Where the release number comes from (default: [project].version in pyproject.toml)
+version-source = { file = "package.json", json-key = "version" }
+# version-source = { file = "pkg/__init__.py", regex = '^__version__ = "([^"]+)"' }
+
+# Where the live service reports its version; after `release` it must equal the release
+version-probe = { path = "/openapi.json", json-key = "info.version" }
 
 # Prove the app talks to the right data, not merely that it answers.
 [[probes]]
@@ -64,7 +72,8 @@ migrate. Nothing is written to disk and no credential is ever printed.
 arango-byoc-deploy list                    # uploaded packages + running services
 arango-byoc-deploy preflight               # check a bundle without uploading
 arango-byoc-deploy release                 # pre-flight, upload, swap, verify
-arango-byoc-deploy verify                  # prove the live service serves
+arango-byoc-deploy upload                  # pre-flight + upload only; deploy later with rollback --to
+arango-byoc-deploy verify [--expect-version X]  # prove the live service serves
 arango-byoc-deploy rollback --to 1.2.0-3   # redeploy an already-uploaded package
 arango-byoc-deploy delete                  # remove the running service
 ```

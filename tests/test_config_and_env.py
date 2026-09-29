@@ -105,3 +105,32 @@ def test_an_explicit_endpoint_overrides_env() -> None:
     )
 
     assert creds.endpoint == "https://b"
+
+
+def test_language_and_version_settings_parse() -> None:
+    from arango_byoc_deploy.config import from_mapping
+
+    cfg = from_mapping(
+        {
+            "app-name": "w",
+            "instance": "w",
+            "language": "nodejs",
+            "version-source": {"file": "package.json", "json-key": "version"},
+            "version-probe": {"path": "/healthz"},
+        }
+    )
+
+    assert cfg.language == "nodejs"
+    assert (cfg.version_source.file, cfg.version_source.json_key) == ("package.json", "version")
+    assert (cfg.version_probe.path, cfg.version_probe.json_key) == ("/healthz", "version")
+
+
+@pytest.mark.parametrize(
+    "source",
+    [{"file": "x"}, {"file": "x", "json-key": "v", "regex": "(.+)"}, {"json-key": "v"}],
+)
+def test_version_source_needs_a_file_and_exactly_one_extractor(source: dict) -> None:
+    from arango_byoc_deploy.config import ConfigError, from_mapping
+
+    with pytest.raises(ConfigError):
+        from_mapping({"app-name": "a", "instance": "a", "version-source": source})

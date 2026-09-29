@@ -19,10 +19,11 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
+from typing import Any
 
 import requests
 
-from .config import AppConfig, Probe
+from .config import AppConfig, Probe, VersionProbe
 from .platform import Platform
 
 #: Relative URLs only — not "/", "http" or "//". Root-absolute assets are the
@@ -104,7 +105,42 @@ def _check_probe(platform: Platform, base: str, probe: Probe) -> tuple[bool, str
     return True, f"    [ OK ] {label:18s} 200"
 
 
-def deep_verify(platform: Platform, base: str, config: AppConfig) -> Result:
+def _dotted(value: Any, key: str) -> Any:
+    for part in key.split("."):
+        if not isinstance(value, dict) or part not in value:
+            return None
+        value = value[part]
+    return value
+
+
+def _check_version(
+    platform: Platform, base: str, probe: VersionProbe, expected: str | None
+) -> tuple[bool, str]:
+    """The live version, compared with *expected* when one is demanded.
+
+    Fails closed when a version was demanded but cannot be read: an unreadable
+    endpoint means the right build cannot be proven live.
+    """
+    label = "live version"
+    try:
+        response = platform.get(base + probe.path.lstrip("/"))
+        live = _dotted(response.json(), probe.json_key) if response.status_code == 200 else None
+    except (requests.RequestException, ValueError) as exc:
+        live, detail = None, type(exc).__name__
+    else:
+        detail = f"HTTP {response.status_code}"
+    if expected is None:
+        return True, f"    [ -- ] {label:18s} {live if live is not None else f'unreadable ({detail})'}"
+    if live is None:
+        return False, f"    [FAIL] {label:18s} unreadable at {probe.path} ({detail}); expected {expected}"
+    if str(live) != expected:
+        return False, f"    [FAIL] {label:18s} {live}, expected {expected} — the old build is still serving"
+    return True, f"    [ OK ] {label:18s} {live}"
+
+
+def deep_verify(
+    platform: Platform, base: str, config: AppConfig, expect_version: str | None = None
+) -> Result:
     """Everything beyond "it answered". ``base`` ends with ``/``.
 
     With a UI, the bare mount root must return 200 — it is where the platform's
@@ -147,6 +183,11 @@ def deep_verify(platform: Platform, base: str, config: AppConfig) -> Result:
             for code, asset in broken:
                 ok = False
                 lines.append(f"           {code} {asset}")
+
+    if config.version_probe is not None:
+        passed, line = _check_version(platform, base, config.version_probe, expect_version)
+        ok = ok and passed
+        lines.append(line)
 
     for probe in config.probes:
         passed, line = _check_probe(platform, base, probe)
