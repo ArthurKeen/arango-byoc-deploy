@@ -95,17 +95,26 @@ def _tarball(ctx: _Context, explicit: str | None) -> Path:
     return matches[-1]
 
 
-def _release_version(ctx: _Context, explicit: str | None) -> str:
-    return release_version(ctx.repo, ctx.config, explicit)
+def _release_version(ctx: _Context, explicit: str | None, tarball: Path | None = None) -> str:
+    return release_version(ctx.repo, ctx.config, explicit, tarball)
 
 
-def release_version(repo: Path, config: config_mod.AppConfig, explicit: str | None) -> str:
+def release_version(
+    repo: Path, config: config_mod.AppConfig, explicit: str | None, tarball: Path | None = None
+) -> str:
     """The release number: --version, else the configured version-source, else
     ``[project].version`` in pyproject.toml."""
     if explicit:
         return explicit
     source = config.version_source
-    if source is not None:
+    if source is not None and source.tarball_regex:
+        if tarball is None:
+            raise DeployError("version-source reads the bundle's name, but no bundle was resolved")
+        match = re.fullmatch(source.tarball_regex, tarball.name)
+        if not match or not match.groups():
+            raise DeployError(f"cannot read a version from {tarball.name!r} with {source.tarball_regex!r}")
+        return match.group(1)
+    if source is not None and source.file:
         path = repo / source.file
         if not path.is_file():
             raise DeployError(f"version-source file {source.file} not found under {repo}")
@@ -218,7 +227,7 @@ def cmd_release(args: argparse.Namespace) -> int:
     preflight.require(tarball, ctx.config, ctx.db_name)
     print(f"    pre-flight OK ({tarball.name})")
 
-    release = _release_version(ctx, args.version)
+    release = _release_version(ctx, args.version, tarball)
     version = release if args.exact else next_build_version(ctx.platform, ctx.config.app_name, release)
     size_mb = tarball.stat().st_size / 1_048_576
     print(f"==> uploading {tarball.name} ({size_mb:.1f} MB) as {ctx.config.app_name} {version}")
@@ -233,7 +242,7 @@ def cmd_upload(args: argparse.Namespace) -> int:
     ctx = _Context(args)
     tarball = _tarball(ctx, args.tarball)
     preflight.require(tarball, ctx.config, ctx.db_name)
-    release = _release_version(ctx, args.version)
+    release = _release_version(ctx, args.version, tarball)
     version = release if args.exact else next_build_version(ctx.platform, ctx.config.app_name, release)
     print(f"==> uploading {tarball.name} as {ctx.config.app_name} {version}")
     ctx.platform.upload(tarball, ctx.config.app_name, version, language=ctx.config.language)

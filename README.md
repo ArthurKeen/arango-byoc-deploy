@@ -48,6 +48,7 @@ language         = "python"                # or "nodejs" (e.g. a node22base serv
 # Where the release number comes from (default: [project].version in pyproject.toml)
 version-source = { file = "package.json", json-key = "version" }
 # version-source = { file = "pkg/__init__.py", regex = '^__version__ = "([^"]+)"' }
+# version-source = { tarball-regex = 'app-(.+)\.tar\.gz' }   # from the bundle's filename
 
 # Where the live service reports its version; after `release` it must equal the release
 version-probe = { path = "/openapi.json", json-key = "info.version" }

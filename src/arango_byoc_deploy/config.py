@@ -87,13 +87,16 @@ class EnvRule:
 class VersionSource:
     """Where the release number is read from.
 
-    A JSON file and key (``package.json`` / ``version``), or any text file and
-    a regex whose first group is the version (``__version__ = "(.+)"``).
+    A JSON file and key (``package.json`` / ``version``); any text file and a
+    regex whose first group is the version (``__version__ = "(.+)"``); or a
+    regex over the bundle's own filename (``app-(.+)\\.tar\\.gz``), for repos
+    where the artifact being deployed is the authority.
     """
 
-    file: str
+    file: str | None = None
     json_key: str | None = None
     regex: str | None = None
+    tarball_regex: str | None = None
 
 
 @dataclass(frozen=True)
@@ -227,8 +230,14 @@ def _parse_env_rules(raw: Any) -> tuple[EnvRule, ...]:
 def _parse_version_source(raw: Any) -> VersionSource | None:
     if raw is None:
         return None
-    if not isinstance(raw, dict) or not raw.get("file"):
-        raise ConfigError("version-source needs a 'file'")
+    if not isinstance(raw, dict):
+        raise ConfigError("version-source must be a table")
+    if raw.get("tarball-regex"):
+        if raw.get("file"):
+            raise ConfigError("version-source: 'tarball-regex' reads the bundle's name; drop 'file'")
+        return VersionSource(tarball_regex=str(raw["tarball-regex"]))
+    if not raw.get("file"):
+        raise ConfigError("version-source needs a 'file' (or a 'tarball-regex')")
     json_key, regex = raw.get("json-key"), raw.get("regex")
     if bool(json_key) == bool(regex):
         raise ConfigError("version-source needs exactly one of 'json-key' or 'regex'")

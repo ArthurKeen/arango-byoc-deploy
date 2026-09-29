@@ -113,3 +113,13 @@ def test_no_ui_drops_the_ui_from_preflight_and_verify() -> None:
     assert (bare.has_ui, bare.index_html, bare.required_members) == (False, None, ("entrypoint",))
     assert bare.effective_ready_path == "/health"
     assert build_parser().parse_args(["--no-ui", "release"]).no_ui is True
+
+
+def test_release_from_the_bundles_filename(tmp_path: Path) -> None:
+    """FinReflectKG / gdelt: the artifact being deployed is the authority."""
+    source = VersionSource(tarball_regex=r"finreflectkg-timetravel-(.+)\.tar\.gz")
+    bundle = tmp_path / "finreflectkg-timetravel-1.0.3.tar.gz"
+
+    assert release_version(tmp_path, _cfg(source), None, bundle) == "1.0.3"
+    with pytest.raises(DeployError, match="cannot read a version"):
+        release_version(tmp_path, _cfg(source), None, tmp_path / "other.tar.gz")
