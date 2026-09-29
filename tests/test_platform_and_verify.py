@@ -17,6 +17,7 @@ from arango_byoc_deploy.config import AppConfig, Probe
 from arango_byoc_deploy.platform import (
     ACP,
     FILEMANAGER,
+    PAGE_SIZE,
     DeployError,
     Platform,
     mount_path,
@@ -121,6 +122,39 @@ def test_one_transparent_reauth_on_401(platform: tuple[Platform, FakeSession]) -
 
     assert p.list_packages() == [{"name": "a"}]
     assert sum(1 for m, url, _ in fake.calls if url.endswith("/_open/auth")) == 2
+
+
+def test_list_packages_follows_every_page(platform: tuple[Platform, FakeSession]) -> None:
+    """One unpaged call returned only the first 100 — prod.demo already held 94."""
+    p, fake = platform
+    first = [{"name": "app", "version": f"1.0-{i}"} for i in range(1, PAGE_SIZE + 1)]
+    second = [{"name": "app", "version": f"1.0-{i}"} for i in range(PAGE_SIZE + 1, PAGE_SIZE + 51)]
+    fake.route(
+        "GET",
+        FILEMANAGER,
+        _response(200, {"services": first, "total": 150, "limit": PAGE_SIZE, "offset": 0}),
+        _response(200, {"services": second, "total": 150, "limit": PAGE_SIZE, "offset": PAGE_SIZE}),
+    )
+
+    packages = p.list_packages("app")
+
+    assert len(packages) == 150
+    offsets = [kw["params"]["offset"] for m, url, kw in fake.calls if url.endswith(FILEMANAGER)]
+    assert offsets == [0, PAGE_SIZE]
+    assert next_build_version(p, "app", "1.0") == "1.0-151"
+
+
+def test_list_packages_rechecks_the_name_filter(platform: tuple[Platform, FakeSession]) -> None:
+    """A looser server-side match must not leak another app's builds."""
+    p, fake = platform
+    fake.route(
+        "GET",
+        FILEMANAGER,
+        _response(200, {"services": [{"name": "app"}, {"name": "app-legacy"}], "total": 2}),
+    )
+
+    assert p.list_packages("app") == [{"name": "app"}]
+    assert next(kw for m, url, kw in fake.calls if url.endswith(FILEMANAGER))["params"]["name"] == "app"
 
 
 def test_resolve_instance_refuses_ambiguity(platform: tuple[Platform, FakeSession]) -> None:

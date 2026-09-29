@@ -140,9 +140,7 @@ def _swap(ctx: _Context, args: argparse.Namespace, version: str) -> int:
 def cmd_list(args: argparse.Namespace) -> int:
     ctx = _Context(args)
     print(f"cluster  {ctx.endpoint}\napp      {ctx.config.app_name}\n")
-    packages = sorted(
-        str(p.get("version")) for p in ctx.platform.list_packages() if p.get("name") == ctx.config.app_name
-    )
+    packages = sorted(str(p.get("version")) for p in ctx.platform.list_packages(ctx.config.app_name))
     print(f"uploaded packages: {len(packages)}")
     for version in packages:
         print(f"  {version}")
@@ -189,9 +187,7 @@ def cmd_release(args: argparse.Namespace) -> int:
 def cmd_rollback(args: argparse.Namespace) -> int:
     """Redeploy an already-uploaded package. Code only — data is untouched."""
     ctx = _Context(args)
-    available = sorted(
-        {str(p.get("version")) for p in ctx.platform.list_packages() if p.get("name") == ctx.config.app_name}
-    )
+    available = sorted({str(p.get("version")) for p in ctx.platform.list_packages(ctx.config.app_name)})
     if args.to not in available:
         raise DeployError(f"{ctx.config.app_name} {args.to} is not uploaded. Available: {available[-10:]}")
     print(f"==> ROLLBACK to {args.to}")

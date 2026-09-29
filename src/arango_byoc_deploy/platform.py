@@ -16,6 +16,8 @@ import requests
 
 ACP = "/_platform/acp/v1"
 FILEMANAGER = "/_platform/filemanager/global/byoc/"
+#: The file manager's maximum page size (its OpenAPI caps ``limit`` at 100).
+PAGE_SIZE = 100
 
 READY = frozenset({"DEPLOYED"})
 FAILED = frozenset({"FAILED", "ERROR", "TERMINATED"})
@@ -104,8 +106,29 @@ class Platform:
 
     # -- packages ---------------------------------------------------------
 
-    def list_packages(self) -> list[dict]:
-        return self._request("GET", FILEMANAGER).get("services", [])
+    def list_packages(self, name: str | None = None) -> list[dict]:
+        """Every uploaded package, optionally only those named ``name``.
+
+        The file manager pages at ``limit`` (at most 100): one unpaged call
+        silently drops everything past the first page, so build numbering
+        would reuse a taken version and rollback would not see old builds
+        once a cluster holds more than a page of packages.
+        """
+        params: dict[str, Any] = {"limit": PAGE_SIZE}
+        if name:
+            params["name"] = name
+        packages: list[dict] = []
+        while True:
+            page = self._request("GET", FILEMANAGER, params={**params, "offset": len(packages)})
+            batch = page.get("services", [])
+            packages.extend(batch)
+            total = page.get("total")
+            if not batch or len(batch) < PAGE_SIZE or (isinstance(total, int) and len(packages) >= total):
+                break
+        # The server-side filter is a convenience, not a contract this tool
+        # relies on: re-check the name so a looser server match cannot leak
+        # another app's versions into build numbering.
+        return [p for p in packages if not name or p.get("name") == name]
 
     def upload(self, tarball: Path, name: str, version: str) -> dict:
         """Upload a package. The platform keys on (name, version) and rejects reuse."""
@@ -238,9 +261,7 @@ def next_build_version(platform: Platform, name: str, release: str) -> str:
     """
     highest = 0
     pattern = re.compile(rf"{re.escape(release)}-(\d+)")
-    for package in platform.list_packages():
-        if package.get("name") != name:
-            continue
+    for package in platform.list_packages(name):
         match = pattern.fullmatch(str(package.get("version") or ""))
         if match:
             highest = max(highest, int(match.group(1)))
