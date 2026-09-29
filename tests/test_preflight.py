@@ -140,7 +140,7 @@ def test_root_absolute_assets_are_refused(tmp_path: Path) -> None:
 
     problems = check(bundle, _config(index_html="static/index.html"), None)
 
-    assert any("root-absolute assets" in p for p in problems)
+    assert any("outside the mount prefix" in p for p in problems)
 
 
 def test_relative_and_external_assets_are_fine(tmp_path: Path) -> None:
@@ -188,3 +188,30 @@ def test_require_raises_with_every_problem_listed(tmp_path: Path) -> None:
 
     assert "app.py missing" in str(excinfo.value)
     assert "line 1 must begin" in str(excinfo.value)
+
+
+def test_prefix_baked_absolute_assets_pass_preflight(tmp_path: Path) -> None:
+    """Next.js basePath output is absolute but under the mount — not the prefix bug."""
+    bundle = _tarball(
+        tmp_path,
+        {
+            "entrypoint": GOOD_ENTRY,
+            "app.py": "",
+            "static/index.html": f'<script src="{MOUNT}/_next/a.js"></script>',
+        },
+    )
+
+    assert check(bundle, _config(index_html="static/index.html"), "AIM") == []
+
+
+def test_a_required_directory_needs_something_under_it(tmp_path: Path) -> None:
+    """worldview must ship node_modules/: the pod cannot reach the npm registry at boot."""
+    cfg = _config(required_members=("entrypoint", "node_modules/"))
+    without = _tarball(tmp_path, {"entrypoint": GOOD_ENTRY})
+    (tmp_path / "with").mkdir()
+    with_modules = _tarball(
+        tmp_path / "with", {"entrypoint": GOOD_ENTRY, "node_modules/express/index.js": ""}
+    )
+
+    assert any("node_modules/ missing" in p for p in check(without, cfg, None))
+    assert check(with_modules, cfg, None) == []

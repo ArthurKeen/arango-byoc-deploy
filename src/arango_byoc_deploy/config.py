@@ -121,6 +121,8 @@ class AppConfig:
     #: registers no root route, so polling ``/`` would spin to timeout and
     #: report a healthy service as failed.
     ready_path: str | None = None
+    #: Page whose assets are verified, relative to the mount; default the root.
+    asset_page: str | None = None
     #: Package language on the file manager: ``python`` or ``nodejs``.
     language: str = "python"
     #: Release number source; ``None`` reads ``[project].version`` from pyproject.toml.
@@ -220,6 +222,7 @@ def from_mapping(raw: dict[str, Any]) -> AppConfig:
         required_env_keys=_as_tuple(raw.get("required-env-keys"), "required-env-keys"),
         probes=_parse_probes(raw.get("probes")),
         ready_path=raw.get("ready-path"),
+        asset_page=raw.get("asset-page"),
         language=str(raw.get("language", "python")),
         version_source=_parse_version_source(raw.get("version-source")),
         version_probe=_parse_version_probe(raw.get("version-probe")),

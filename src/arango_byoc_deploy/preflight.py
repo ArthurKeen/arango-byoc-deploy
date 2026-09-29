@@ -22,7 +22,7 @@ from .platform import DeployError, mount_path
 #: A root-absolute asset URL in the SPA shell. Under a mount prefix these resolve
 #: against the cluster root instead of the service, so the page loads blank
 #: behind a green health check.
-_ROOT_ABSOLUTE_ASSET = re.compile(r'(?:href|src)="/(?!/)[^"]*"')
+_ROOT_ABSOLUTE_REF = re.compile(r'(?:href|src)="(/(?!/)[^"]*)"')
 
 
 def member_name(name: str) -> str:
@@ -65,7 +65,12 @@ def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
         # Layout. A nested archive (myservice/entrypoint) fails on the platform
         # with a bare "No entrypoint found", so the root is checked explicitly.
         for required in config.required_members:
-            if required not in names:
+            if required.endswith("/"):
+                # A directory: present when anything lives under it
+                # (worldview must ship node_modules/ — boot cannot reach npm).
+                if not any(n.startswith(required) for n in names):
+                    problems.append(f"{required} missing (or empty) at the archive root")
+            elif required not in names:
                 problems.append(f"{required} missing from the archive root")
 
         # Entry-script detection: the platform runs
@@ -123,11 +128,17 @@ def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
             index = read(config.index_html)
             if not index:
                 problems.append(f"{config.index_html} missing or empty")
-            elif _ROOT_ABSOLUTE_ASSET.search(index):
-                problems.append(
-                    f"{config.index_html} references root-absolute assets; they resolve against "
-                    f"the cluster root under the mount prefix and the page loads blank"
-                )
+            else:
+                # A prefix-baked absolute URL (Next.js basePath) is fine; one
+                # outside the mount resolves against the cluster root.
+                prefix = mount_path(config.instance, db_name) + "/"
+                outside = [r for r in _ROOT_ABSOLUTE_REF.findall(index) if not r.startswith(prefix)]
+                if outside:
+                    problems.append(
+                        f"{config.index_html} references {outside[0]!r} (+{len(outside) - 1} more) "
+                        f"outside the mount prefix {prefix!r}; they resolve against the cluster root "
+                        f"and the page loads blank"
+                    )
 
     return problems
 

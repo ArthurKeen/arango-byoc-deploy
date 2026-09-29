@@ -20,6 +20,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -28,7 +29,34 @@ from .platform import Platform
 
 #: Relative URLs only — not "/", "http" or "//". Root-absolute assets are the
 #: prefix bug; pre-flight rejects them before upload.
-_RELATIVE_ASSET = re.compile(r'(?:src|href)="(?!https?:|//|/|#|data:|mailto:)([^"]+)"')
+_REF = re.compile(r'(?:src|href)="([^"]+)"')
+_SKIP_REF = ("http://", "https://", "//", "#", "data:", "mailto:", "javascript:")
+
+
+def page_assets(html: str, page_url: str, mount: str) -> tuple[list[str], list[str]]:
+    """``(urls, outside)`` for every same-host reference on a page.
+
+    References resolve the way a browser resolves them (``urljoin``), so a
+    relative ``./assets/x.js`` and a prefix-baked absolute
+    ``/_service/uds/_db/d/app/_next/x.js`` (Next.js ``basePath``) both land
+    under the mount. Anything that resolves *outside* the mount prefix is the
+    prefix bug — it would load from the cluster root — and is returned in
+    ``outside``. External and in-page references are skipped.
+    """
+    urls: list[str] = []
+    outside: list[str] = []
+    prefix = mount.rstrip("/") + "/"
+    for ref in dict.fromkeys(_REF.findall(html)):
+        if ref.startswith(_SKIP_REF):
+            continue
+        url = urljoin(page_url, ref)
+        path = urlparse(url).path
+        if path.startswith(prefix) or path == prefix.rstrip("/"):
+            urls.append(url)
+        else:
+            outside.append(ref)
+    return urls, outside
+
 
 #: What each non-200 means while a service comes up. Observed on the pilot
 #: cluster: the gateway answers 401 to an authenticated caller until the pod is
@@ -210,18 +238,35 @@ def deep_verify(
                 ],
             )
         lines.append("    [ OK ] app root           200")
-        assets = list(dict.fromkeys(_RELATIVE_ASSET.findall(root.text)))
+        page_url, page = base, root
+        if config.asset_page:
+            # Some apps verify a deeper page (agentic-graph-analytics: /workspace/).
+            page_url = base + config.asset_page.lstrip("/")
+            try:
+                page = platform.get(page_url, allow_redirects=False)
+            except requests.RequestException as exc:
+                return Result(ok=False, lines=[*lines, f"    [FAIL] asset page         {type(exc).__name__}"])
+            if page.status_code != 200:
+                return Result(
+                    ok=False, lines=[*lines, f"    [FAIL] asset page         HTTP {page.status_code}"]
+                )
+        assets, outside = page_assets(page.text, page_url, urlparse(base).path)
+        for ref in outside:
+            ok = False
+            lines.append(f"    [FAIL] outside prefix     {ref} (would load from the cluster root)")
         broken = []
         for asset in assets:
             try:
-                response = platform.get(base + asset.lstrip("./"))
+                response = platform.get(asset)
                 if response.status_code != 200:
                     broken.append((response.status_code, asset))
             except requests.RequestException as exc:
                 broken.append((type(exc).__name__, asset))
         if not assets:
             ok = False
-            lines.append("    [FAIL] assets             the root references no relative assets — wrong page?")
+            lines.append(
+                "    [FAIL] assets             the page references no assets under the mount — wrong page?"
+            )
         else:
             tag = "FAIL" if broken else " OK "
             served = len(assets) - len(broken)

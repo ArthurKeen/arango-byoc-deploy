@@ -37,6 +37,8 @@ database     = "AIM"                       # omit to use ARANGO_DB; "" for _glob
 tarball      = "arango-cypher-byoc.tar.gz" # path or glob (newest match wins)
 
 required-members = ["entrypoint", "pyproject.toml", "ui/dist/index.html"]
+# A trailing "/" requires a non-empty directory, e.g. "node_modules/".
+asset-page       = "workspace/"            # page whose assets are verified (default: the root)
 index-html       = "ui/dist/index.html"    # checked for root-absolute assets
 prefix-env-var   = "ROOT_PATH"             # baked mount prefix to cross-check
 has-ui           = true                    # false for a bare API (no root page)

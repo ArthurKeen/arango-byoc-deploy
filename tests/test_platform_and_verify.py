@@ -426,3 +426,51 @@ def test_several_keys_share_one_request(platform: tuple[Platform, FakeSession]) 
 
     assert result.ok is False  # edges is empty
     assert sum(1 for m, url, _ in fake.calls if url.endswith("/inst/api/asof")) == 1
+
+
+# -- asset resolution --------------------------------------------------------------
+
+
+from arango_byoc_deploy.verify import page_assets  # noqa: E402
+
+MOUNT = "/_service/uds/_db/AIM/inst"
+
+
+def test_prefix_baked_absolute_assets_are_under_the_mount() -> None:
+    """Next.js basePath (worldview, agentic-graph-analytics) emits absolute URLs with the prefix."""
+    html = f'<script src="{MOUNT}/_next/static/a.js"></script><link href="./assets/b.css">'
+
+    urls, outside = page_assets(html, BASE, MOUNT)
+
+    assert urls == [f"https://cluster.example{MOUNT}/_next/static/a.js", f"{BASE}assets/b.css"]
+    assert outside == []
+
+
+def test_an_absolute_asset_outside_the_mount_is_the_prefix_bug() -> None:
+    urls, outside = page_assets('<script src="/assets/a.js"></script>', BASE, MOUNT)
+
+    assert (urls, outside) == ([], ["/assets/a.js"])
+
+
+def test_external_and_in_page_refs_are_skipped() -> None:
+    html = '<a href="https://x.example/"></a><a href="#top"></a><img src="data:image/png;base64,AA">'
+
+    assert page_assets(html, BASE, MOUNT) == ([], [])
+
+
+def test_a_dot_file_keeps_its_dot() -> None:
+    """lstrip('./') used to strip every leading '.' and '/' — .well-known became well-known."""
+    urls, _ = page_assets('<link href=".well-known/x.json">', BASE, MOUNT)
+
+    assert urls == [f"{BASE}.well-known/x.json"]
+
+
+def test_the_asset_page_can_be_a_deeper_route(platform: tuple[Platform, FakeSession]) -> None:
+    p, fake = platform
+    fake.route("GET", "/inst/", _response(200, text="<html></html>"))
+    fake.route("GET", "/inst/workspace/", _response(200, text='<script src="./w.js"></script>'))
+    fake.route("GET", "/inst/workspace/w.js", _response(200, text="js"))
+
+    result = deep_verify(p, BASE, AppConfig(app_name="a", instance="inst", asset_page="workspace/"))
+
+    assert result.ok is True
