@@ -7,6 +7,7 @@ they are handled rather than in a separate list that drifts.
 
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
@@ -228,14 +229,19 @@ class Platform:
 
 
 def next_build_version(platform: Platform, name: str, release: str) -> str:
-    """``<release>-<n>``: the first build suffix not already uploaded under ``name``.
+    """``<release>-<n>``, where n is one past the highest already uploaded.
 
     The platform rejects re-uploading an existing (name, version), so a rebuild
-    of one release needs a fresh build number rather than a version bump.
+    of one release needs a fresh build number rather than a version bump. Taking
+    one past the highest — not the first gap — means a deleted package's number
+    is never reused, so a build number always names exactly one bundle.
     """
-    taken = {str(p.get("version")) for p in platform.list_packages() if p.get("name") == name}
-    for build in range(1, 10_000):
-        candidate = f"{release}-{build}"
-        if candidate not in taken:
-            return candidate
-    raise DeployError(f"no free build suffix for {release}")
+    highest = 0
+    pattern = re.compile(rf"{re.escape(release)}-(\d+)")
+    for package in platform.list_packages():
+        if package.get("name") != name:
+            continue
+        match = pattern.fullmatch(str(package.get("version") or ""))
+        if match:
+            highest = max(highest, int(match.group(1)))
+    return f"{release}-{highest + 1}"

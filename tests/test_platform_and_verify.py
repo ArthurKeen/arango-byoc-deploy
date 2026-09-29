@@ -136,7 +136,8 @@ def test_resolve_instance_refuses_ambiguity(platform: tuple[Platform, FakeSessio
         p.resolve_instance("inst")
 
 
-def test_next_build_version_skips_taken_suffixes(platform: tuple[Platform, FakeSession]) -> None:
+def test_next_build_version_is_one_past_the_highest(platform: tuple[Platform, FakeSession]) -> None:
+    """A gap left by a deleted package (1.0-2) is never refilled."""
     p, fake = platform
     fake.route(
         "GET",
@@ -146,14 +147,22 @@ def test_next_build_version_skips_taken_suffixes(platform: tuple[Platform, FakeS
             {
                 "services": [
                     {"name": "app", "version": "1.0-1"},
-                    {"name": "app", "version": "1.0-2"},
-                    {"name": "other", "version": "1.0-3"},
+                    {"name": "app", "version": "1.0-3"},
+                    {"name": "app", "version": "1.0.1-9"},
+                    {"name": "other", "version": "1.0-7"},
                 ]
             },
         ),
     )
 
-    assert next_build_version(p, "app", "1.0") == "1.0-3"
+    assert next_build_version(p, "app", "1.0") == "1.0-4"
+
+
+def test_first_build_of_a_release_is_one(platform: tuple[Platform, FakeSession]) -> None:
+    p, fake = platform
+    fake.route("GET", FILEMANAGER, _response(200, {"services": []}))
+
+    assert next_build_version(p, "app", "2.0") == "2.0-1"
 
 
 def test_http_errors_carry_method_path_and_status(platform: tuple[Platform, FakeSession]) -> None:
