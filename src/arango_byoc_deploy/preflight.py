@@ -16,7 +16,7 @@ import tarfile
 from pathlib import Path
 
 from .config import AppConfig
-from .env import ENDPOINT_KEYS, LOOPBACK_PATTERN, SECRET_KEY_PATTERN, first
+from .env import ENDPOINT_KEYS, SECRET_KEY_PATTERN, first, is_loopback
 from .platform import DeployError, mount_path
 
 #: A root-absolute asset URL in the SPA shell. Under a mount prefix these resolve
@@ -155,7 +155,7 @@ def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
                 if not env.get(key):
                     problems.append(f"{key} missing from the baked .env")
             endpoint = first(env, ENDPOINT_KEYS) or ""
-            if LOOPBACK_PATTERN.search(endpoint):
+            if endpoint and is_loopback(endpoint):
                 problems.append(
                     "the baked Arango endpoint points at loopback — unreachable from the platform"
                 )

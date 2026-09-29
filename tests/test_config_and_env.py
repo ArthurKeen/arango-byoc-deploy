@@ -134,3 +134,23 @@ def test_version_source_needs_a_file_and_exactly_one_extractor(source: dict) -> 
 
     with pytest.raises(ConfigError):
         from_mapping({"app-name": "a", "instance": "a", "version-source": source})
+
+
+@pytest.mark.parametrize(
+    ("url", "expected"),
+    [
+        ("https://localhost:8529", True),
+        ("http://127.0.0.1:8529", True),
+        ("http://127.0.1.1:8529", True),
+        ("https://0.0.0.0:8529", True),
+        ("http://[::1]:8529", True),
+        ("localhost:8529", True),
+        ("https://prod.demo.pilot.arango.ai:8529", False),
+        # A substring match used to refuse this real host.
+        ("https://localhost-proxy.internal.arango.ai:8529", False),
+    ],
+)
+def test_loopback_is_judged_by_hostname(url: str, expected: bool) -> None:
+    from arango_byoc_deploy.env import is_loopback
+
+    assert is_loopback(url) is expected

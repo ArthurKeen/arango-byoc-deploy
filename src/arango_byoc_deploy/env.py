@@ -20,7 +20,20 @@ DATABASE_KEYS = ("ARANGO_DB", "ARANGO_DATABASE")
 #: uploaded, archived and shared, and an LLM key has no business in one.
 SECRET_KEY_PATTERN = re.compile(r"^\s*(?:export\s+)?([A-Z0-9_]*API_KEY)\s*=\s*\S", re.MULTILINE)
 
-LOOPBACK_PATTERN = re.compile(r"localhost|127\.0\.0\.1|\[::1\]", re.IGNORECASE)
+_LOOPBACK_HOSTS = frozenset({"localhost", "0.0.0.0", "::1"})
+
+
+def is_loopback(url: str) -> bool:
+    """Whether *url*'s host is unreachable from inside the platform.
+
+    Compares the parsed hostname, not a substring: a substring match refused
+    ``localhost-proxy.internal.example`` (a real host) and missed ``0.0.0.0``.
+    Mirrors the entrypoint guard in arango-sparql-py.
+    """
+    from urllib.parse import urlparse
+
+    host = (urlparse(url if "://" in url else f"//{url}").hostname or "").lower()
+    return host in _LOOPBACK_HOSTS or host.startswith("127.")
 
 
 class CredentialError(ValueError):
