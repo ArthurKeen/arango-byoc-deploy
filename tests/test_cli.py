@@ -123,3 +123,22 @@ def test_release_from_the_bundles_filename(tmp_path: Path) -> None:
     assert release_version(tmp_path, _cfg(source), None, bundle) == "1.0.3"
     with pytest.raises(DeployError, match="cannot read a version"):
         release_version(tmp_path, _cfg(source), None, tmp_path / "other.tar.gz")
+
+
+def test_preflight_needs_no_cluster_credentials(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """It inspects a local bundle; CI and package-script tests have no .env."""
+    import io
+    import tarfile
+
+    (tmp_path / "arango-byoc.toml").write_text('app-name = "a"\ninstance = "a"\ndatabase = "db1"\n')
+    bundle = tmp_path / "b.tar.gz"
+    with tarfile.open(bundle, "w:gz") as archive:
+        data = b"entrypoint = __file__\n"
+        info = tarfile.TarInfo("./entrypoint")
+        info.size = len(data)
+        archive.addfile(info, io.BytesIO(data))
+
+    code = main(["--repo", str(tmp_path), "preflight", "--tarball", str(bundle)])
+
+    assert code == 0, capsys.readouterr().err
+    assert "pre-flight OK" in capsys.readouterr().out

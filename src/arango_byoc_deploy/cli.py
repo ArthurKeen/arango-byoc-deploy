@@ -40,16 +40,35 @@ class _Context:
             self.config = _replace(self.config, instance=args.instance)
         if getattr(args, "no_ui", False):
             self.config = without_ui(self.config)
-        creds = env_mod.resolve(env_mod.load_env(self.repo / ".env"), endpoint_override=args.endpoint)
-        self.endpoint = creds.endpoint
-        self.platform = Platform(creds.endpoint, creds.user, creds.password)
+        self._env = env_mod.load_env(self.repo / ".env")
+        self._endpoint_override = args.endpoint
+        self._creds: env_mod.Credentials | None = None
+        self._platform: Platform | None = None
         # --db beats config beats ARANGO_DB; "" forces a _global mount.
         if args.db is not None:
             self.db_name = args.db or None
         elif self.config.database is not None:
             self.db_name = self.config.database or None
         else:
-            self.db_name = creds.database
+            self.db_name = env_mod.first(self._env, env_mod.DATABASE_KEYS)
+
+    # Credentials resolve lazily: `preflight` inspects a local bundle and must
+    # run where no cluster credentials exist (CI, a package-script test).
+    @property
+    def creds(self) -> env_mod.Credentials:
+        if self._creds is None:
+            self._creds = env_mod.resolve(self._env, endpoint_override=self._endpoint_override)
+        return self._creds
+
+    @property
+    def endpoint(self) -> str:
+        return self.creds.endpoint
+
+    @property
+    def platform(self) -> Platform:
+        if self._platform is None:
+            self._platform = Platform(self.creds.endpoint, self.creds.user, self.creds.password)
+        return self._platform
 
     @property
     def mount(self) -> str:
