@@ -28,7 +28,7 @@ dev = ["pytest>=8", "ruff==0.16.4"]
 arango-byoc-deploy = "arango_byoc_deploy.cli:main"
 
 [project.urls]
-Repository = "https://github.com/arango-solutions/arango-byoc-deploy"
+Repository = "https://github.com/ArthurKeen/arango-byoc-deploy"
 
 [tool.hatch.version]
 path = "src/arango_byoc_deploy/__init__.py"

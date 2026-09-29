@@ -1,9 +1,10 @@
 # Releasing
 
 Publishing goes to PyPI through Trusted Publishing (OIDC), so no API tokens are
-involved. The publish workflow runs only in `ArthurKeen/arango-byoc-deploy`. The
-`arango-solutions` copy is a push mirror, is not registered as a publisher, and
-skips the job.
+involved. The publish workflow runs only in `ArthurKeen/arango-byoc-deploy`. If an
+`arango-solutions` mirror is added later (that is a shared user account, so it
+needs someone signed in as it to create the repo), it is not a registered
+publisher and the job skips there.
 
 ## One-time setup
 

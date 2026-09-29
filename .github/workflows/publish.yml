@@ -49,7 +49,7 @@ jobs:
     name: Build sdist + wheel
     runs-on: ubuntu-latest
     # Only the canonical publishing repo builds/publishes. The dual-push mirror
-    # to arango-solutions/arango-byoc-deploy is NOT a registered Trusted Publisher,
+    # to arango-solutions/arango-byoc-deploy (if one is added) is NOT a registered Trusted Publisher,
     # so its upload would fail every release; skipping here cascades to the
     # publish jobs (they `needs: build`), making the mirror a clean no-op.
     if: github.repository == 'ArthurKeen/arango-byoc-deploy'
