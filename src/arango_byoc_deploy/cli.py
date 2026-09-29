@@ -185,12 +185,14 @@ def _verify(
     if answered is None:
         print(f"error: {ready} never returned 200 within {args.wait_timeout:.0f}s", file=sys.stderr)
         return 1
-    result = verify.deep_verify(ctx.platform, ctx.url, ctx.config, expect_version)
-    if unverifiable and result.ok:
-        for line in result.lines:
-            print(line)
-        print("    => UNVERIFIED (legacy build: it serves, but which build is live cannot be proven)")
+    if unverifiable:
+        # A legacy build predates the version endpoint and often the probe
+        # endpoints too: deep checks would hit its 404 page and report a working
+        # rollback as FAILED. Say exactly what is known instead.
+        print(f"    {ready} serving 200 — build identity cannot be proven")
+        print("    => UNVERIFIED (legacy build)")
         return EXIT_UNVERIFIED
+    result = verify.deep_verify(ctx.platform, ctx.url, ctx.config, expect_version)
     result.report()
     return 0 if result.ok else 1
 

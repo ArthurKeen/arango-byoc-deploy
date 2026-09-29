@@ -169,7 +169,8 @@ def test_a_legacy_rollback_that_serves_exits_unverified(tmp_path: Path) -> None:
     fake = FakeSession()
     fake.route("POST", "/_open/auth", _response(200, {"jwt": "t"}))
     fake.route("GET", "/inst/health", _response(200, {"status": "ok"}))
-    fake.route("GET", "/inst/healthz", _response(200, {"version": "0.1.0"}))
+    # A legacy build has no /healthz: probing it would 404 and misreport FAILED.
+    fake.route("GET", "/inst/healthz", _response(404, text="<html>Not Found</html>"))
     ctx.platform.session = fake  # type: ignore[assignment]
 
     code = cli._verify(ctx, args, None, unverifiable=True)
