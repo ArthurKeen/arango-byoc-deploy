@@ -39,17 +39,31 @@ class ConfigError(ValueError):
 class Probe:
     """One URL the verifier must see succeed after a deploy.
 
-    ``path`` is relative to the mount root. ``expect_json_key`` asserts a key is
-    present in a JSON body; ``min_items`` asserts a list-valued body (or the
-    value under ``expect_json_key``) has at least that many entries — the check
-    that catches "healthy service, wrong or empty database".
+    ``path`` is relative to the mount root. ``expect_json_key`` names one key,
+    or several checked against the same response (one request, not one per
+    key — some probes are slow graph queries). A key is dotted (``info.version``)
+    and ``[]`` flattens a list (``windows[].id`` is every window's id).
+
+    For each key: it must be present; ``min_items`` requires a list or dict to
+    have at least that many entries, or a number to be at least that value;
+    ``must_contain`` requires a list value to include that element. These are
+    the checks that catch "healthy service, wrong or empty database".
     """
 
     path: str
     label: str = ""
-    expect_json_key: str | None = None
+    expect_json_key: str | tuple[str, ...] | None = None
     min_items: int | None = None
     timeout: float = 60.0
+    must_contain: str | None = None
+
+    @property
+    def keys(self) -> tuple[str, ...]:
+        if self.expect_json_key is None:
+            return ()
+        if isinstance(self.expect_json_key, str):
+            return (self.expect_json_key,)
+        return tuple(self.expect_json_key)
 
 
 @dataclass(frozen=True)
@@ -132,6 +146,14 @@ def _as_tuple(value: Any, key: str) -> tuple[str, ...]:
     raise ConfigError(f"{key} must be a string or a list of strings, got {value!r}")
 
 
+def _json_keys(raw: Any, index: int) -> str | tuple[str, ...] | None:
+    if raw is None or isinstance(raw, str):
+        return raw
+    if isinstance(raw, list) and raw and all(isinstance(k, str) for k in raw):
+        return tuple(raw)
+    raise ConfigError(f"probes[{index}].expect-json-key must be a string or a non-empty list of strings")
+
+
 def _parse_probes(raw: Any) -> tuple[Probe, ...]:
     if raw is None:
         return ()
@@ -148,9 +170,10 @@ def _parse_probes(raw: Any) -> tuple[Probe, ...]:
             Probe(
                 path=str(item["path"]),
                 label=str(item.get("label", "")),
-                expect_json_key=item.get("expect-json-key"),
+                expect_json_key=_json_keys(item.get("expect-json-key"), i),
                 min_items=item.get("min-items"),
                 timeout=float(item.get("timeout", 60.0)),
+                must_contain=item.get("must-contain"),
             )
         )
     return tuple(probes)

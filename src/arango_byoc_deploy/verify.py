@@ -79,7 +79,7 @@ def _check_probe(platform: Platform, base: str, probe: Probe) -> tuple[bool, str
     if response.status_code != 200:
         return False, f"    [FAIL] {label:18s} HTTP {response.status_code}"
 
-    if probe.expect_json_key is None and probe.min_items is None:
+    if not probe.keys and probe.min_items is None and probe.must_contain is None:
         return True, f"    [ OK ] {label:18s} 200"
 
     try:
@@ -87,22 +87,68 @@ def _check_probe(platform: Platform, base: str, probe: Probe) -> tuple[bool, str
     except ValueError:
         return False, f"    [FAIL] {label:18s} expected JSON, got {response.text[:40]!r}"
 
-    value = body
-    if probe.expect_json_key is not None:
-        if not isinstance(body, dict) or probe.expect_json_key not in body:
-            return False, f"    [FAIL] {label:18s} no {probe.expect_json_key!r} in response"
-        value = body[probe.expect_json_key]
+    notes: list[str] = []
+    for key in probe.keys or ("",):
+        found, value = resolve(body, key) if key else (True, body)
+        name = key or "body"
+        if not found:
+            return False, f"    [FAIL] {label:18s} no {name!r} in response"
+        if probe.min_items is not None:
+            size = _size(value)
+            if size < probe.min_items:
+                # The check that catches "healthy service, empty or wrong database".
+                return False, (
+                    f"    [FAIL] {label:18s} {name}={size}, expected >= {probe.min_items} "
+                    f"— wrong or partially loaded database?"
+                )
+            notes.append(f"{name}={size}")
+        if probe.must_contain is not None:
+            if not isinstance(value, list) or probe.must_contain not in value:
+                return False, f"    [FAIL] {label:18s} {name} does not include {probe.must_contain!r}"
+            notes.append(f"{name} has {probe.must_contain!r}")
+    return True, f"    [ OK ] {label:18s} {', '.join(notes) or '200'}"
 
-    if probe.min_items is not None:
-        count = len(value) if isinstance(value, (list, dict)) else 0
-        if count < probe.min_items:
-            # The check that catches "healthy service, empty or wrong database".
-            return False, (
-                f"    [FAIL] {label:18s} {count} item(s), expected >= {probe.min_items} "
-                f"— wrong or partially loaded database?"
-            )
-        return True, f"    [ OK ] {label:18s} {count} item(s)"
-    return True, f"    [ OK ] {label:18s} 200"
+
+def resolve(body: Any, key: str) -> tuple[bool, Any]:
+    """``(found, value)`` for a dotted key; ``name[]`` flattens a list.
+
+    ``windows[].id`` on ``{"windows": [{"id": "a"}, {"id": "b"}]}`` is
+    ``(True, ["a", "b"])``.
+    """
+    values: list[Any] = [body]
+    flattened = False
+    for part in key.split("."):
+        spread = part.endswith("[]")
+        name = part[:-2] if spread else part
+        nxt: list[Any] = []
+        for current in values:
+            if not isinstance(current, dict) or name not in current:
+                if not flattened:
+                    return False, None
+                continue
+            item = current[name]
+            if spread:
+                if not isinstance(item, list):
+                    return False, None
+                nxt.extend(item)
+            else:
+                nxt.append(item)
+        values = nxt
+        flattened = flattened or spread
+    if flattened:
+        return True, values
+    return (True, values[0]) if values else (False, None)
+
+
+def _size(value: Any) -> float:
+    """List/dict length, or a number's own value (``events: 51234``)."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return value
+    if isinstance(value, (list, dict, str)):
+        return len(value)
+    return 0
 
 
 def _dotted(value: Any, key: str) -> Any:

@@ -302,7 +302,7 @@ def test_min_items_catches_a_healthy_service_on_the_wrong_database(
     result = deep_verify(p, BASE, cfg)
 
     assert result.ok is False
-    assert any("12 item(s), expected >= 700" in line for line in result.lines)
+    assert any("body=12, expected >= 700" in line for line in result.lines)
 
 
 def test_expect_json_key_is_enforced(platform: tuple[Platform, FakeSession]) -> None:
@@ -363,3 +363,66 @@ def test_upload_sends_the_configured_language(platform: tuple[Platform, FakeSess
 
     body = next(kw["data"] for m, url, kw in fake.calls if m == "POST" and url.endswith(FILEMANAGER))
     assert body["language"] == "nodejs"
+
+
+# -- probe expressions -----------------------------------------------------------
+
+
+from arango_byoc_deploy.verify import resolve  # noqa: E402
+
+
+@pytest.mark.parametrize(
+    ("body", "key", "expected"),
+    [
+        ({"info": {"version": "1.0"}}, "info.version", (True, "1.0")),
+        ({"windows": [{"id": "a"}, {"id": "b"}]}, "windows[].id", (True, ["a", "b"])),
+        ({"info": {}}, "info.version", (False, None)),
+        ({"windows": "nope"}, "windows[].id", (False, None)),
+    ],
+)
+def test_resolve(body: dict, key: str, expected: tuple) -> None:
+    assert resolve(body, key) == expected
+
+
+def test_min_items_on_a_number_compares_its_value(platform: tuple[Platform, FakeSession]) -> None:
+    """gdelt: an empty corpus reports events=0 behind a 200."""
+    p, fake = platform
+    fake.route("GET", "/inst/api/corpus", _response(200, {"events": 0}))
+    cfg = AppConfig(
+        app_name="a",
+        instance="inst",
+        has_ui=False,
+        probes=(Probe(path="/api/corpus", expect_json_key="events", min_items=1),),
+    )
+
+    assert deep_verify(p, BASE, cfg).ok is False
+
+
+def test_must_contain_over_a_flattened_list(platform: tuple[Platform, FakeSession]) -> None:
+    """gdelt: every published figure depends on the 'delivered' window."""
+    p, fake = platform
+    fake.route(
+        "GET", "/inst/api/windows", _response(200, {"windows": [{"id": "baseline"}, {"id": "delivered"}]})
+    )
+    ok = Probe(path="/api/windows", expect_json_key="windows[].id", must_contain="delivered")
+    missing = Probe(path="/api/windows", expect_json_key="windows[].id", must_contain="shock")
+
+    assert (
+        deep_verify(p, BASE, AppConfig(app_name="a", instance="inst", has_ui=False, probes=(ok,))).ok is True
+    )
+    assert (
+        deep_verify(p, BASE, AppConfig(app_name="a", instance="inst", has_ui=False, probes=(missing,))).ok
+        is False
+    )
+
+
+def test_several_keys_share_one_request(platform: tuple[Platform, FakeSession]) -> None:
+    """FinReflectKG's graph query takes up to 180 s; checking nodes and edges must not run it twice."""
+    p, fake = platform
+    fake.route("GET", "/inst/api/asof", _response(200, {"nodes": [1, 2], "edges": []}))
+    probe = Probe(path="/api/asof", expect_json_key=("nodes", "edges"), min_items=1)
+
+    result = deep_verify(p, BASE, AppConfig(app_name="a", instance="inst", has_ui=False, probes=(probe,)))
+
+    assert result.ok is False  # edges is empty
+    assert sum(1 for m, url, _ in fake.calls if url.endswith("/inst/api/asof")) == 1

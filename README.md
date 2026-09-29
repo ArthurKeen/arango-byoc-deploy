@@ -59,6 +59,19 @@ path      = "/sample-queries"
 label     = "sample queries"
 expect-json-key = "queries"
 min-items = 1
+
+# One request, several keys; a number satisfies min-items by its value.
+[[probes]]
+path            = "/api/asof?ticker=aapl&year=2020"
+expect-json-key = ["nodes", "edges"]
+min-items       = 1
+timeout         = 180
+
+# Dotted keys; `name[]` flattens a list. must-contain checks membership.
+[[probes]]
+path            = "/api/windows"
+expect-json-key = "windows[].id"
+must-contain    = "delivered"
 ```
 
 Credentials come from the repository's `.env`. Every estate spelling is accepted —
