@@ -71,6 +71,13 @@ key    = "ALLOW_SYSTEM_RESET"
 forbid = ["true"]
 reason = "ships a system-wipe endpoint"
 
+# warn = true reports a legitimate-but-dangerous setting without refusing.
+[[env-rules]]
+key    = "AUTH_DEV_BYPASS"
+forbid = ["true"]
+warn   = true
+reason = "every request is served as an admin"
+
 [[env-rules]]
 key    = "ARANGO_DATABASE"
 equals = "aga_workspace"

@@ -49,9 +49,9 @@ def baked_secret_keys(env_text: str) -> list[str]:
     return sorted(set(SECRET_KEY_PATTERN.findall(env_text)))
 
 
-def secret_warnings(tarball: Path, config: AppConfig) -> list[str]:
-    """One warning per allowed secret actually baked in *tarball*."""
-    if not config.allow_baked_secrets or not tarball.is_file():
+def bundle_warnings(tarball: Path, config: AppConfig) -> list[str]:
+    """Warnings for a bundle that passes: allowed baked secrets, and warn-only env-rules."""
+    if not (config.allow_baked_secrets or any(r.warn for r in config.env_rules)) or not tarball.is_file():
         return []
     try:
         with tarfile.open(tarball, "r:gz") as archive:
@@ -61,18 +61,26 @@ def secret_warnings(tarball: Path, config: AppConfig) -> list[str]:
             env_text = handle.read().decode("utf-8", "replace") if handle else ""
     except (tarfile.TarError, OSError):
         return []
-    return [
+    found = [
         f"WARNING: {key} is baked into {tarball.name} (allowed by allow-baked-secrets) — "
         "the bundle is a credential: do not commit, attach or copy it"
         for key in baked_secret_keys(env_text)
         if key in config.allow_baked_secrets
     ]
+    found += [f"WARNING: {w}" for w in _env_rule_problems(_parse_env(env_text), config, warnings=True)]
+    return found
 
 
-def _env_rule_problems(env: dict[str, str], config: AppConfig) -> list[str]:
-    """Problems from the app's own ``env-rules`` (values are never echoed)."""
+def _env_rule_problems(env: dict[str, str], config: AppConfig, *, warnings: bool = False) -> list[str]:
+    """Findings from the app's own ``env-rules`` (secret values are never echoed).
+
+    ``warnings=False`` returns the refusing rules' findings, ``True`` the
+    warn-only rules' — so one rule set drives both.
+    """
     problems: list[str] = []
     for rule in config.env_rules:
+        if rule.warn != warnings:
+            continue
         if rule.unless and env.get(rule.unless, "").strip().lower() in _TRUTHY:
             continue
         value = env.get(rule.key, "")

@@ -263,7 +263,7 @@ def cmd_preflight(args: argparse.Namespace) -> int:
         for problem in problems:
             print(f"  - {problem}")
         return 1
-    for warning in preflight.secret_warnings(tarball, ctx.config):
+    for warning in preflight.bundle_warnings(tarball, ctx.config):
         print(warning, file=sys.stderr)
     print(f"pre-flight OK for {tarball.name} (mount {ctx.mount})")
     return 0
@@ -278,7 +278,7 @@ def cmd_release(args: argparse.Namespace) -> int:
     ctx = _Context(args)
     tarball = _tarball(ctx, args.tarball)
     preflight.require(tarball, ctx.config, ctx.db_name)
-    for warning in preflight.secret_warnings(tarball, ctx.config):
+    for warning in preflight.bundle_warnings(tarball, ctx.config):
         print(f"    {warning}", file=sys.stderr)
     print(f"    pre-flight OK ({tarball.name})")
 

@@ -278,13 +278,28 @@ def test_an_env_rule_can_require_an_exact_value(tmp_path: Path) -> None:
 
 def test_an_allowed_secret_passes_but_is_named_in_a_warning(tmp_path: Path) -> None:
     """agentic-graph-analytics bakes its LLM keys deliberately; anything unlisted is still refused."""
-    from arango_byoc_deploy.preflight import secret_warnings
+    from arango_byoc_deploy.preflight import bundle_warnings
 
     bundle = _env_bundle(tmp_path, "OPENAI_API_KEY=sk-live-1\nOTHER_API_KEY=x\n")
     cfg = _config(allow_baked_secrets=("OPENAI_API_KEY",))
 
     problems = check(bundle, cfg, None)
-    warnings = secret_warnings(bundle, cfg)
+    warnings = bundle_warnings(bundle, cfg)
 
     assert len(problems) == 1 and "OTHER_API_KEY" in problems[0] and "OPENAI_API_KEY" not in problems[0]
     assert len(warnings) == 1 and "OPENAI_API_KEY" in warnings[0] and "sk-live-1" not in warnings[0]
+
+
+def test_a_warn_rule_passes_the_bundle_but_is_reported(tmp_path: Path) -> None:
+    """ontoextract: AUTH_DEV_BYPASS=true is legitimate but serves everyone as admin."""
+    from arango_byoc_deploy.preflight import bundle_warnings
+
+    rule = EnvRule(
+        key="AUTH_DEV_BYPASS", forbid=("true",), warn=True, reason="every request is served as admin"
+    )
+    bundle = _env_bundle(tmp_path, "AUTH_DEV_BYPASS=true\n")
+    cfg = _config(env_rules=(rule,))
+
+    assert check(bundle, cfg, None) == []
+    warnings = bundle_warnings(bundle, cfg)
+    assert len(warnings) == 1 and "AUTH_DEV_BYPASS" in warnings[0]

@@ -74,6 +74,8 @@ class EnvRule:
     (case-insensitive). ``min_length`` and
     ``reject_prefixes`` require a real secret rather than a placeholder.
     ``unless`` skips the rule when that key is truthy (``true``/``1``/``yes``).
+    ``warn`` reports a match as a warning instead of refusing the bundle — for
+    settings that are legitimate but dangerous (ontoextract's AUTH_DEV_BYPASS).
     """
 
     key: str
@@ -83,6 +85,7 @@ class EnvRule:
     reject_prefixes: tuple[str, ...] = ()
     unless: str | None = None
     reason: str = ""
+    warn: bool = False
 
 
 @dataclass(frozen=True)
@@ -225,6 +228,7 @@ def _parse_env_rules(raw: Any) -> tuple[EnvRule, ...]:
             reject_prefixes=_as_tuple(item.get("reject-prefixes"), f"env-rules[{i}].reject-prefixes"),
             unless=item.get("unless"),
             reason=str(item.get("reason", "")),
+            warn=bool(item.get("warn", False)),
         )
         if not (rule.equals is not None or rule.forbid or rule.min_length or rule.reject_prefixes):
             raise ConfigError(
