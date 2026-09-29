@@ -38,6 +38,8 @@ class _Context:
         self.config = config_mod.load(self.repo)
         if args.instance:
             self.config = _replace(self.config, instance=args.instance)
+        if getattr(args, "no_ui", False):
+            self.config = without_ui(self.config)
         creds = env_mod.resolve(env_mod.load_env(self.repo / ".env"), endpoint_override=args.endpoint)
         self.endpoint = creds.endpoint
         self.platform = Platform(creds.endpoint, creds.user, creds.password)
@@ -56,6 +58,21 @@ class _Context:
     @property
     def url(self) -> str:
         return f"{self.endpoint}{self.mount}/"
+
+
+def without_ui(cfg: config_mod.AppConfig) -> config_mod.AppConfig:
+    """*cfg* for a bare-API deploy of a repo that normally ships a UI.
+
+    Drops the UI from pre-flight as well as from verify: a bundle built without
+    the UI must not fail for lacking ``index.html``.
+    """
+    ui_files = {cfg.index_html} if cfg.index_html else set()
+    return _replace(
+        cfg,
+        has_ui=False,
+        index_html=None,
+        required_members=tuple(m for m in cfg.required_members if m not in ui_files),
+    )
 
 
 def _replace(cfg: config_mod.AppConfig, **changes: object) -> config_mod.AppConfig:
@@ -267,6 +284,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--endpoint", help="override the cluster URL from .env")
     parser.add_argument("--db", help="database to mount under; '' forces a _global mount")
     parser.add_argument("--instance", help="override the configured app_instance_name")
+    parser.add_argument("--no-ui", action="store_true", help="deploy the bare API (skip the UI checks)")
     sub = parser.add_subparsers(dest="command", required=True)
 
     def _waits(p: argparse.ArgumentParser) -> None:

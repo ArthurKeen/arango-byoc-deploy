@@ -96,3 +96,20 @@ def test_upload_is_a_command() -> None:
 
 def test_verify_accepts_an_expected_version() -> None:
     assert build_parser().parse_args(["verify", "--expect-version", "1.0"]).expect_version == "1.0"
+
+
+def test_no_ui_drops_the_ui_from_preflight_and_verify() -> None:
+    from arango_byoc_deploy.cli import without_ui
+
+    cfg = AppConfig(
+        app_name="a",
+        instance="a",
+        required_members=("entrypoint", "ui/dist/index.html"),
+        index_html="ui/dist/index.html",
+    )
+
+    bare = without_ui(cfg)
+
+    assert (bare.has_ui, bare.index_html, bare.required_members) == (False, None, ("entrypoint",))
+    assert bare.effective_ready_path == "/health"
+    assert build_parser().parse_args(["--no-ui", "release"]).no_ui is True
