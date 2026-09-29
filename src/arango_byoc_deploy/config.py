@@ -67,6 +67,23 @@ class Probe:
 
 
 @dataclass(frozen=True)
+class EnvRule:
+    """An app-specific check on one key of the baked ``.env``.
+
+    ``forbid`` rejects listed values (case-insensitive). ``min_length`` and
+    ``reject_prefixes`` require a real secret rather than a placeholder.
+    ``unless`` skips the rule when that key is truthy (``true``/``1``/``yes``).
+    """
+
+    key: str
+    forbid: tuple[str, ...] = ()
+    min_length: int | None = None
+    reject_prefixes: tuple[str, ...] = ()
+    unless: str | None = None
+    reason: str = ""
+
+
+@dataclass(frozen=True)
 class VersionSource:
     """Where the release number is read from.
 
@@ -121,6 +138,7 @@ class AppConfig:
     #: registers no root route, so polling ``/`` would spin to timeout and
     #: report a healthy service as failed.
     ready_path: str | None = None
+    env_rules: tuple[EnvRule, ...] = ()
     #: Page whose assets are verified, relative to the mount; default the root.
     asset_page: str | None = None
     #: Package language on the file manager: ``python`` or ``nodejs``.
@@ -181,6 +199,31 @@ def _parse_probes(raw: Any) -> tuple[Probe, ...]:
     return tuple(probes)
 
 
+def _parse_env_rules(raw: Any) -> tuple[EnvRule, ...]:
+    if raw is None:
+        return ()
+    if not isinstance(raw, list):
+        raise ConfigError("env-rules must be a list of tables")
+    rules = []
+    for i, item in enumerate(raw):
+        if not isinstance(item, dict) or not item.get("key"):
+            raise ConfigError(f"env-rules[{i}] needs a 'key'")
+        rule = EnvRule(
+            key=str(item["key"]),
+            forbid=_as_tuple(item.get("forbid"), f"env-rules[{i}].forbid"),
+            min_length=item.get("min-length"),
+            reject_prefixes=_as_tuple(item.get("reject-prefixes"), f"env-rules[{i}].reject-prefixes"),
+            unless=item.get("unless"),
+            reason=str(item.get("reason", "")),
+        )
+        if not (rule.forbid or rule.min_length or rule.reject_prefixes):
+            raise ConfigError(
+                f"env-rules[{i}] ({rule.key}) checks nothing: set forbid, min-length or reject-prefixes"
+            )
+        rules.append(rule)
+    return tuple(rules)
+
+
 def _parse_version_source(raw: Any) -> VersionSource | None:
     if raw is None:
         return None
@@ -223,6 +266,7 @@ def from_mapping(raw: dict[str, Any]) -> AppConfig:
         probes=_parse_probes(raw.get("probes")),
         ready_path=raw.get("ready-path"),
         asset_page=raw.get("asset-page"),
+        env_rules=_parse_env_rules(raw.get("env-rules")),
         language=str(raw.get("language", "python")),
         version_source=_parse_version_source(raw.get("version-source")),
         version_probe=_parse_version_probe(raw.get("version-probe")),

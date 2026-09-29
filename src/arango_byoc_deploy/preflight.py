@@ -41,6 +41,28 @@ def _parse_env(text: str) -> dict[str, str]:
     return env
 
 
+_TRUTHY = {"true", "1", "yes"}
+
+
+def _env_rule_problems(env: dict[str, str], config: AppConfig) -> list[str]:
+    """Problems from the app's own ``env-rules`` (values are never echoed)."""
+    problems: list[str] = []
+    for rule in config.env_rules:
+        if rule.unless and env.get(rule.unless, "").strip().lower() in _TRUTHY:
+            continue
+        value = env.get(rule.key, "")
+        why = f" — {rule.reason}" if rule.reason else ""
+        if rule.forbid and value.strip().lower() in {v.lower() for v in rule.forbid}:
+            problems.append(f"{rule.key}={value.strip()} in the baked .env is not allowed{why}")
+        if rule.min_length is not None and len(value) < rule.min_length:
+            problems.append(
+                f"{rule.key} in the baked .env is missing or under {rule.min_length} characters{why}"
+            )
+        if rule.reject_prefixes and value.lower().startswith(tuple(p.lower() for p in rule.reject_prefixes)):
+            problems.append(f"{rule.key} in the baked .env is a placeholder{why}")
+    return problems
+
+
 def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
     """Every problem with ``tarball``; an empty list means it may be uploaded."""
     if not tarball.is_file():
@@ -107,6 +129,7 @@ def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
                     "an *_API_KEY is baked into .env — tarballs are uploaded and archived; "
                     "set API keys in the Container Manager instead"
                 )
+            problems.extend(_env_rule_problems(env, config))
             if config.prefix_env_var:
                 baked = env.get(config.prefix_env_var, "").rstrip("/")
                 expected = mount_path(config.instance, db_name)

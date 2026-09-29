@@ -52,6 +52,19 @@ version-source = { file = "package.json", json-key = "version" }
 # Where the live service reports its version; after `release` it must equal the release
 version-probe = { path = "/openapi.json", json-key = "info.version" }
 
+# App-specific rules on the baked .env (values are never printed).
+[[env-rules]]
+key             = "APP_SECRET_KEY"
+min-length      = 32
+reject-prefixes = ["change-me", "changeme"]
+unless          = "AUTH_DEV_BYPASS"
+reason          = "the backend refuses to start without a real signing key"
+
+[[env-rules]]
+key    = "ALLOW_SYSTEM_RESET"
+forbid = ["true"]
+reason = "ships a system-wipe endpoint"
+
 # Prove the app talks to the right data, not merely that it answers.
 [[probes]]
 path  = "/health"

@@ -215,3 +215,49 @@ def test_a_required_directory_needs_something_under_it(tmp_path: Path) -> None:
 
     assert any("node_modules/ missing" in p for p in check(without, cfg, None))
     assert check(with_modules, cfg, None) == []
+
+
+# -- env-rules ----------------------------------------------------------------------
+
+
+from arango_byoc_deploy.config import EnvRule  # noqa: E402
+
+SECRET_RULE = EnvRule(
+    key="APP_SECRET_KEY",
+    min_length=32,
+    reject_prefixes=("change-me", "changeme"),
+    unless="AUTH_DEV_BYPASS",
+    reason="the backend refuses to start without a real signing key",
+)
+RESET_RULE = EnvRule(key="ALLOW_SYSTEM_RESET", forbid=("true",), reason="ships a system-wipe endpoint")
+
+
+def _env_bundle(tmp_path: Path, env: str) -> Path:
+    return _tarball(tmp_path, {"entrypoint": GOOD_ENTRY, "app.py": "", ".env": env})
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ("APP_SECRET_KEY=" + "a" * 64 + "\n", []),
+        ("APP_SECRET_KEY=short\n", ["under 32 characters"]),
+        ("APP_SECRET_KEY=change-me-" + "x" * 40 + "\n", ["placeholder"]),
+        ("AUTH_DEV_BYPASS=true\n", []),  # bypass: no secret needed
+        ("APP_SECRET_KEY=" + "a" * 64 + "\nALLOW_SYSTEM_RESET=TRUE\n", ["not allowed"]),
+    ],
+)
+def test_app_env_rules(tmp_path: Path, env: str, expected: list[str]) -> None:
+    """ontoextract: a missing secret crash-loops (reported as a 503); a reset flag ships a wipe endpoint."""
+    problems = check(_env_bundle(tmp_path, env), _config(env_rules=(SECRET_RULE, RESET_RULE)), None)
+
+    assert len(problems) == len(expected)
+    for fragment, problem in zip(expected, problems, strict=True):
+        assert fragment in problem
+
+
+def test_env_rule_messages_never_echo_a_secret(tmp_path: Path) -> None:
+    problems = check(
+        _env_bundle(tmp_path, "APP_SECRET_KEY=hunter2\n"), _config(env_rules=(SECRET_RULE,)), None
+    )
+
+    assert problems and "hunter2" not in problems[0]
