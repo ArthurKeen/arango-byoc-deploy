@@ -39,6 +39,8 @@ tarball      = "arango-cypher-byoc.tar.gz" # path or glob (newest match wins)
 required-members = ["entrypoint", "pyproject.toml", "ui/dist/index.html"]
 index-html       = "ui/dist/index.html"    # checked for root-absolute assets
 prefix-env-var   = "ROOT_PATH"             # baked mount prefix to cross-check
+has-ui           = true                    # false for a bare API (no root page)
+ready-path       = "/health"               # polled after deploy; default "/" with a UI, "/health" without
 
 # Prove the app talks to the right data, not merely that it answers.
 [[probes]]

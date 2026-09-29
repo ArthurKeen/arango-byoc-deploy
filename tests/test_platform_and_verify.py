@@ -236,28 +236,55 @@ def test_every_relative_asset_must_load(platform: tuple[Platform, FakeSession]) 
     p, fake = platform
     fake.route("GET", "/inst/assets/app.js", _response(200, text="js"))
     fake.route("GET", "/inst/assets/app.css", _response(404))
-    root = _response(200, text='<script src="./assets/app.js"></script><link href="./assets/app.css">')
+    fake.route(
+        "GET",
+        "/inst/",
+        _response(200, text='<script src="./assets/app.js"></script><link href="./assets/app.css">'),
+    )
 
-    result = deep_verify(p, BASE, AppConfig(app_name="a", instance="inst"), root)
+    result = deep_verify(p, BASE, AppConfig(app_name="a", instance="inst"))
 
     assert result.ok is False
     assert any("1/2 served" in line for line in result.lines)
 
 
 def test_a_root_with_no_relative_assets_fails(platform: tuple[Platform, FakeSession]) -> None:
-    p, _ = platform
-    root = _response(200, text="<html><body>nothing here</body></html>")
+    p, fake = platform
+    fake.route("GET", "/inst/", _response(200, text="<html><body>nothing here</body></html>"))
 
-    assert deep_verify(p, BASE, AppConfig(app_name="a", instance="inst"), root).ok is False
+    assert deep_verify(p, BASE, AppConfig(app_name="a", instance="inst")).ok is False
+
+
+def test_a_ui_root_that_is_not_200_fails(platform: tuple[Platform, FakeSession]) -> None:
+    """The launcher opens the root; a service answering only /health is not an app."""
+    p, fake = platform
+    fake.route("GET", "/inst/", _response(404, {"detail": "Not Found"}))
+
+    result = deep_verify(p, BASE, AppConfig(app_name="a", instance="inst"))
+
+    assert result.ok is False
+    assert any("HTTP 404" in line for line in result.lines)
 
 
 def test_a_headless_service_skips_the_asset_check(platform: tuple[Platform, FakeSession]) -> None:
-    p, _ = platform
-    root = _response(200, text='{"status": "ok"}')
+    """A headless service registers no root route; it must not be asked for one."""
+    p, fake = platform
 
-    result = deep_verify(p, BASE, AppConfig(app_name="a", instance="inst", has_ui=False), root)
+    result = deep_verify(p, BASE, AppConfig(app_name="a", instance="inst", has_ui=False))
 
     assert result.ok is True
+    assert not any(url.endswith("/inst/") for m, url, _ in fake.calls if m == "GET")
+
+
+@pytest.mark.parametrize(
+    ("has_ui", "ready_path", "expected"),
+    [(True, None, "/"), (False, None, "/health"), (False, "/api/ping", "/api/ping")],
+)
+def test_the_readiness_poll_path(has_ui: bool, ready_path: str | None, expected: str) -> None:
+    """Polling / on a bare API spun to timeout and reported a healthy service failed."""
+    cfg = AppConfig(app_name="a", instance="inst", has_ui=has_ui, ready_path=ready_path)
+
+    assert cfg.effective_ready_path == expected
 
 
 def test_min_items_catches_a_healthy_service_on_the_wrong_database(
@@ -272,7 +299,7 @@ def test_min_items_catches_a_healthy_service_on_the_wrong_database(
         probes=(Probe(path="/api/tickers", label="tickers", min_items=700),),
     )
 
-    result = deep_verify(p, BASE, cfg, _response(200, text="{}"))
+    result = deep_verify(p, BASE, cfg)
 
     assert result.ok is False
     assert any("12 item(s), expected >= 700" in line for line in result.lines)
@@ -288,4 +315,4 @@ def test_expect_json_key_is_enforced(platform: tuple[Platform, FakeSession]) -> 
         probes=(Probe(path="/api/years", expect_json_key="anchors"),),
     )
 
-    assert deep_verify(p, BASE, cfg, _response(200, text="{}")).ok is False
+    assert deep_verify(p, BASE, cfg).ok is False

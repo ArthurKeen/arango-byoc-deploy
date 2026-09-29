@@ -80,6 +80,17 @@ class AppConfig:
     #: Keys that must be present in a baked ``.env`` when one is required.
     required_env_keys: tuple[str, ...] = ()
     probes: tuple[Probe, ...] = field(default_factory=tuple)
+    #: Path polled until the service answers after a deploy. ``None`` means
+    #: ``/`` for a UI service and ``/health`` for a headless one — a bare API
+    #: registers no root route, so polling ``/`` would spin to timeout and
+    #: report a healthy service as failed.
+    ready_path: str | None = None
+
+    @property
+    def effective_ready_path(self) -> str:
+        if self.ready_path:
+            return self.ready_path
+        return "/" if self.has_ui else "/health"
 
 
 def _as_tuple(value: Any, key: str) -> tuple[str, ...]:
@@ -137,6 +148,7 @@ def from_mapping(raw: dict[str, Any]) -> AppConfig:
         require_baked_env=bool(raw.get("require-baked-env", False)),
         required_env_keys=_as_tuple(raw.get("required-env-keys"), "required-env-keys"),
         probes=_parse_probes(raw.get("probes")),
+        ready_path=raw.get("ready-path"),
     )
 
 

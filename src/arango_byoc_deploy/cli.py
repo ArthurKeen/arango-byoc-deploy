@@ -89,14 +89,15 @@ def _release_version(ctx: _Context, explicit: str | None) -> str:
 
 
 def _verify(ctx: _Context, args: argparse.Namespace) -> int:
-    print(f"==> polling {ctx.url}")
-    root = verify.poll_until_serving(
-        ctx.platform, ctx.url, timeout_s=args.wait_timeout, interval_s=args.poll_interval
+    ready = ctx.url + ctx.config.effective_ready_path.lstrip("/")
+    print(f"==> polling {ready}")
+    answered = verify.poll_until_serving(
+        ctx.platform, ready, timeout_s=args.wait_timeout, interval_s=args.poll_interval
     )
-    if root is None:
-        print(f"error: {ctx.url} never returned 200 within {args.wait_timeout:.0f}s", file=sys.stderr)
+    if answered is None:
+        print(f"error: {ready} never returned 200 within {args.wait_timeout:.0f}s", file=sys.stderr)
         return 1
-    result = verify.deep_verify(ctx.platform, ctx.url, ctx.config, root)
+    result = verify.deep_verify(ctx.platform, ctx.url, ctx.config)
     result.report()
     return 0 if result.ok else 1
 

@@ -104,12 +104,30 @@ def _check_probe(platform: Platform, base: str, probe: Probe) -> tuple[bool, str
     return True, f"    [ OK ] {label:18s} 200"
 
 
-def deep_verify(platform: Platform, base: str, config: AppConfig, root: requests.Response) -> Result:
-    """Everything beyond "the root answered". ``base`` ends with ``/``."""
-    lines: list[str] = ["    [ OK ] app root           200"]
+def deep_verify(platform: Platform, base: str, config: AppConfig) -> Result:
+    """Everything beyond "it answered". ``base`` ends with ``/``.
+
+    With a UI, the bare mount root must return 200 — it is where the platform's
+    app launcher opens the service — and every relative asset it references
+    must load. Checked here, not left to the readiness poll, because the poll
+    may target ``/health``, which answers even when the root does not.
+    """
+    lines: list[str] = []
     ok = True
 
     if config.has_ui:
+        try:
+            root = platform.get(base, allow_redirects=False)
+        except requests.RequestException as exc:
+            return Result(ok=False, lines=[f"    [FAIL] app root           {type(exc).__name__}"])
+        if root.status_code != 200:
+            return Result(
+                ok=False,
+                lines=[
+                    f"    [FAIL] app root           HTTP {root.status_code} — the app launcher opens here"
+                ],
+            )
+        lines.append("    [ OK ] app root           200")
         assets = list(dict.fromkeys(_RELATIVE_ASSET.findall(root.text)))
         broken = []
         for asset in assets:
