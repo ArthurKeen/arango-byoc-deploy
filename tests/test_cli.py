@@ -176,3 +176,70 @@ def test_a_legacy_rollback_that_serves_exits_unverified(tmp_path: Path) -> None:
     code = cli._verify(ctx, args, None, unverifiable=True)
 
     assert code == cli.EXIT_UNVERIFIED
+
+
+# `verify` proves the right build is live, not merely that something is.
+#
+# agentic-graph-analytics, 2026-11-19: a standalone `verify` printed
+# "[ -- ] live version 3.1.0 => VERIFIED" against a build five weeks old,
+# because with no expected version it had nothing to fail on. The version was
+# only ever checked by `release`/`update`, which pass one.
+
+
+def _verify_args(**overrides):
+    argv = ["verify"] + [a for k, v in overrides.items() for a in (f"--{k.replace('_', '-')}", v) if v is not True]
+    if overrides.get("any_version") is True:
+        argv = ["verify", "--any-version"]
+    return build_parser().parse_args(argv)
+
+
+def _capture_expected(monkeypatch, *, repo_release):
+    from arango_byoc_deploy import cli
+
+    seen: dict[str, object] = {}
+    monkeypatch.setattr(cli, "_Context", lambda args: object())
+    monkeypatch.setattr(cli, "_release_or_none", lambda ctx, explicit, tarball=None: repo_release)
+    monkeypatch.setattr(
+        cli, "_verify", lambda ctx, args, expected=None, **kw: seen.setdefault("expected", expected) or 0
+    )
+    return seen
+
+
+def test_verify_defaults_to_the_repository_release(monkeypatch) -> None:
+    from arango_byoc_deploy.cli import cmd_verify
+
+    seen = _capture_expected(monkeypatch, repo_release="3.1.0")
+
+    cmd_verify(_verify_args())
+
+    assert seen["expected"] == "3.1.0"
+
+
+def test_any_version_restores_the_informational_behaviour(monkeypatch) -> None:
+    from arango_byoc_deploy.cli import cmd_verify
+
+    seen = _capture_expected(monkeypatch, repo_release="3.1.0")
+
+    cmd_verify(_verify_args(any_version=True))
+
+    assert seen["expected"] is None
+
+
+def test_an_explicit_expected_version_still_wins(monkeypatch) -> None:
+    from arango_byoc_deploy.cli import cmd_verify
+
+    seen = _capture_expected(monkeypatch, repo_release="3.1.0")
+
+    cmd_verify(_verify_args(expect_version="2.0.0"))
+
+    assert seen["expected"] == "2.0.0"
+
+
+def test_verify_still_runs_where_the_repository_has_no_release(monkeypatch) -> None:
+    from arango_byoc_deploy.cli import cmd_verify
+
+    seen = _capture_expected(monkeypatch, repo_release=None)
+
+    cmd_verify(_verify_args())
+
+    assert seen["expected"] is None

@@ -118,6 +118,18 @@ def _release_version(ctx: _Context, explicit: str | None, tarball: Path | None =
     return release_version(ctx.repo, ctx.config, explicit, tarball)
 
 
+def _release_or_none(ctx: _Context, explicit: str | None, tarball: Path | None = None) -> str | None:
+    """The release number, or ``None`` when the repository cannot supply one.
+
+    ``preflight`` and ``verify`` want it when it exists but must still run
+    without it; only an upload genuinely needs a number.
+    """
+    try:
+        return release_version(ctx.repo, ctx.config, explicit, tarball)
+    except DeployError:
+        return None
+
+
 def release_version(
     repo: Path, config: config_mod.AppConfig, explicit: str | None, tarball: Path | None = None
 ) -> str:
@@ -257,13 +269,14 @@ def cmd_list(args: argparse.Namespace) -> int:
 def cmd_preflight(args: argparse.Namespace) -> int:
     ctx = _Context(args)
     tarball = _tarball(ctx, args.tarball)
-    problems = preflight.check(tarball, ctx.config, ctx.db_name)
+    release = _release_or_none(ctx, getattr(args, "version", None), tarball)
+    problems = preflight.check(tarball, ctx.config, ctx.db_name, release)
     if problems:
         print(f"pre-flight FAILED for {tarball.name}:")
         for problem in problems:
             print(f"  - {problem}")
         return 1
-    for warning in preflight.bundle_warnings(tarball, ctx.config):
+    for warning in preflight.bundle_warnings(tarball, ctx.config, release):
         print(warning, file=sys.stderr)
     print(f"pre-flight OK for {tarball.name} (mount {ctx.mount})")
     return 0
@@ -277,12 +290,12 @@ def cmd_release(args: argparse.Namespace) -> int:
     """
     ctx = _Context(args)
     tarball = _tarball(ctx, args.tarball)
-    preflight.require(tarball, ctx.config, ctx.db_name)
-    for warning in preflight.bundle_warnings(tarball, ctx.config):
+    release = _release_version(ctx, args.version, tarball)
+    preflight.require(tarball, ctx.config, ctx.db_name, release)
+    for warning in preflight.bundle_warnings(tarball, ctx.config, release):
         print(f"    {warning}", file=sys.stderr)
     print(f"    pre-flight OK ({tarball.name})")
 
-    release = _release_version(ctx, args.version, tarball)
     version = release if args.exact else next_build_version(ctx.platform, ctx.config.app_name, release)
     size_mb = tarball.stat().st_size / 1_048_576
     print(f"==> uploading {tarball.name} ({size_mb:.1f} MB) as {ctx.config.app_name} {version}")
@@ -296,8 +309,8 @@ def cmd_upload(args: argparse.Namespace) -> int:
     """Pre-flight and upload only; deploy later with ``rollback --to``."""
     ctx = _Context(args)
     tarball = _tarball(ctx, args.tarball)
-    preflight.require(tarball, ctx.config, ctx.db_name)
     release = _release_version(ctx, args.version, tarball)
+    preflight.require(tarball, ctx.config, ctx.db_name, release)
     version = release if args.exact else next_build_version(ctx.platform, ctx.config.app_name, release)
     print(f"==> uploading {tarball.name} as {ctx.config.app_name} {version}")
     ctx.platform.upload(tarball, ctx.config.app_name, version, language=ctx.config.language)
@@ -322,7 +335,18 @@ def cmd_rollback(args: argparse.Namespace) -> int:
 
 
 def cmd_verify(args: argparse.Namespace) -> int:
-    return _verify(_Context(args), args, args.expect_version)
+    """Prove the live service serves — and that it serves *this* release.
+
+    The version was informational here until a stale bundle deployed under a
+    fresh label: ``verify`` reported the live version and passed, because with
+    nothing to compare against it had nothing to fail. It now defaults to the
+    repository's release, so a green verify means the right build is live.
+    ``--any-version`` restores the old behaviour for deliberately checking an
+    older deployment.
+    """
+    ctx = _Context(args)
+    expected = None if args.any_version else (args.expect_version or _release_or_none(ctx, None))
+    return _verify(ctx, args, expected)
 
 
 def cmd_delete(args: argparse.Namespace) -> int:
@@ -388,6 +412,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_ver = sub.add_parser("verify", help="prove the live service serves")
     p_ver.add_argument("--expect-version", help="fail unless the live service reports this release")
+    p_ver.add_argument(
+        "--any-version",
+        action="store_true",
+        help="report the live version without checking it against the repository",
+    )
     _waits(p_ver)
     p_ver.set_defaults(func=cmd_verify)
 
