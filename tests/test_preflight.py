@@ -12,9 +12,9 @@ from pathlib import Path
 
 import pytest
 
-from arango_byoc_deploy.config import AppConfig
+from arango_byoc_deploy.config import AppConfig, VersionSource
 from arango_byoc_deploy.platform import DeployError
-from arango_byoc_deploy.preflight import check, require
+from arango_byoc_deploy.preflight import bundle_warnings, check, require
 
 GOOD_ENTRY = "entrypoint = __file__\nimport os\n"
 MOUNT = "/_service/uds/_db/AIM/demo"
@@ -303,3 +303,81 @@ def test_a_warn_rule_passes_the_bundle_but_is_reported(tmp_path: Path) -> None:
     assert check(bundle, cfg, None) == []
     warnings = bundle_warnings(bundle, cfg)
     assert len(warnings) == 1 and "AUTH_DEV_BYPASS" in warnings[0]
+
+
+# The bundle must be the code the release claims it is.
+#
+# agentic-graph-analytics, 2026-11-19: `update` uploaded an aga-service.tar.gz
+# left in the tree from September, labelled 3.1.0-2 because the release number
+# is read from the repository. Pre-flight passed — it had never looked inside
+# the archive for a version — and production was swapped back to 3.0.0 code.
+# Only the post-swap version probe caught it, after the old service was gone.
+
+_VERSION_SOURCE = VersionSource(
+    file="pkg/__init__.py", regex=r"""^__version__\s*=\s*["']([^"']+)["']"""
+)
+
+
+def _versioned(tmp_path: Path, version: str) -> Path:
+    return _tarball(
+        tmp_path,
+        {
+            "entrypoint": GOOD_ENTRY,
+            "app.py": "",
+            "pkg/__init__.py": f'__version__ = "{version}"\n',
+        },
+    )
+
+
+def test_a_stale_bundle_is_refused(tmp_path: Path) -> None:
+    bundle = _versioned(tmp_path, "3.0.0")
+    config = _config(version_source=_VERSION_SOURCE)
+
+    problems = check(bundle, config, None, "3.1.0")
+
+    assert len(problems) == 1
+    assert "says 3.0.0" in problems[0]
+    assert "would upload as 3.1.0" in problems[0]
+    assert "rebuild it" in problems[0]
+
+
+def test_a_matching_bundle_passes(tmp_path: Path) -> None:
+    bundle = _versioned(tmp_path, "3.1.0")
+
+    assert check(bundle, _config(version_source=_VERSION_SOURCE), None, "3.1.0") == []
+
+
+def test_require_raises_on_a_stale_bundle(tmp_path: Path) -> None:
+    bundle = _versioned(tmp_path, "3.0.0")
+
+    with pytest.raises(DeployError, match="the bundle is stale"):
+        require(bundle, _config(version_source=_VERSION_SOURCE), None, "3.1.0")
+
+
+def test_without_an_expected_release_the_version_is_not_checked(tmp_path: Path) -> None:
+    """`preflight` on a repo that cannot supply a release number still runs."""
+
+    bundle = _versioned(tmp_path, "3.0.0")
+
+    assert check(bundle, _config(version_source=_VERSION_SOURCE), None, None) == []
+
+
+def test_a_bundle_without_the_version_file_is_warned_about_not_refused(
+    tmp_path: Path,
+) -> None:
+    """Some bundles legitimately do not ship their version source. That cannot
+    fail the upload, but it must not pass silently either: the label is then
+    the only thing claiming what the code is."""
+
+    bundle = _tarball(tmp_path, {"entrypoint": GOOD_ENTRY, "app.py": ""})
+    config = _config(version_source=_VERSION_SOURCE)
+
+    assert check(bundle, config, None, "3.1.0") == []
+    warnings = bundle_warnings(bundle, config, "3.1.0")
+    assert any("carries no readable version" in w for w in warnings)
+
+
+def test_no_version_warning_when_no_release_is_expected(tmp_path: Path) -> None:
+    bundle = _tarball(tmp_path, {"entrypoint": GOOD_ENTRY, "app.py": ""})
+
+    assert bundle_warnings(bundle, _config(version_source=_VERSION_SOURCE), None) == []

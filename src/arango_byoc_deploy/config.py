@@ -17,6 +17,8 @@ have no ``pyproject.toml``.
 
 from __future__ import annotations
 
+import json
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -102,6 +104,27 @@ class VersionSource:
     json_key: str | None = None
     regex: str | None = None
     tarball_regex: str | None = None
+
+
+def version_in(source: VersionSource, text: str) -> str | None:
+    """The version *source* finds in *text*, or ``None`` if it is not there.
+
+    Shared by the release number read from the repository and the one read
+    back out of a bundle, so the two cannot disagree about how to parse the
+    same file. Returns ``None`` rather than raising: one caller treats a miss
+    as fatal, the other as a warning.
+    """
+
+    if source.json_key:
+        try:
+            value: Any = json.loads(text)
+        except ValueError:
+            return None
+        for part in source.json_key.split("."):
+            value = value.get(part) if isinstance(value, dict) else None
+        return str(value) if value else None
+    match = re.search(source.regex or "", text, re.M)
+    return match.group(1) if match and match.groups() else None
 
 
 @dataclass(frozen=True)

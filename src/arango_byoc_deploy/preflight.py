@@ -15,7 +15,7 @@ import re
 import tarfile
 from pathlib import Path
 
-from .config import AppConfig
+from .config import AppConfig, version_in
 from .env import ENDPOINT_KEYS, SECRET_KEY_PATTERN, first, is_loopback
 from .platform import DeployError, mount_path
 
@@ -49,9 +49,18 @@ def baked_secret_keys(env_text: str) -> list[str]:
     return sorted(set(SECRET_KEY_PATTERN.findall(env_text)))
 
 
-def bundle_warnings(tarball: Path, config: AppConfig) -> list[str]:
-    """Warnings for a bundle that passes: allowed baked secrets, and warn-only env-rules."""
-    if not (config.allow_baked_secrets or any(r.warn for r in config.env_rules)) or not tarball.is_file():
+def bundle_warnings(
+    tarball: Path, config: AppConfig, expect_version: str | None = None
+) -> list[str]:
+    """Warnings for a bundle that passes: allowed baked secrets, warn-only
+    env-rules, and a release whose version could not be read back out of the
+    archive (``check`` fails on a version that disagrees; this covers the case
+    where there is nothing to compare)."""
+    if not tarball.is_file():
+        return []
+    source = config.version_source
+    wants_version = bool(expect_version and source is not None and source.file)
+    if not (config.allow_baked_secrets or any(r.warn for r in config.env_rules) or wants_version):
         return []
     try:
         with tarfile.open(tarball, "r:gz") as archive:
@@ -59,9 +68,20 @@ def bundle_warnings(tarball: Path, config: AppConfig) -> list[str]:
             raw = names.get(".env")
             handle = archive.extractfile(raw) if raw else None
             env_text = handle.read().decode("utf-8", "replace") if handle else ""
+            version_text = ""
+            if wants_version:
+                member = names.get(member_name(source.file))
+                vhandle = archive.extractfile(member) if member else None
+                version_text = vhandle.read().decode("utf-8", "replace") if vhandle else ""
     except (tarfile.TarError, OSError):
         return []
-    found = [
+    found = []
+    if wants_version and version_in(source, version_text) is None:
+        found.append(
+            f"WARNING: the archive carries no readable version in {source.file}, so it cannot "
+            f"be proven to be the {expect_version} code — only the upload label says so"
+        )
+    found += [
         f"WARNING: {key} is baked into {tarball.name} (allowed by allow-baked-secrets) — "
         "the bundle is a credential: do not commit, attach or copy it"
         for key in baked_secret_keys(env_text)
@@ -98,8 +118,19 @@ def _env_rule_problems(env: dict[str, str], config: AppConfig, *, warnings: bool
     return problems
 
 
-def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
-    """Every problem with ``tarball``; an empty list means it may be uploaded."""
+def check(
+    tarball: Path,
+    config: AppConfig,
+    db_name: str | None,
+    expect_version: str | None = None,
+) -> list[str]:
+    """Every problem with ``tarball``; an empty list means it may be uploaded.
+
+    *expect_version* is the release the bundle is about to be uploaded as. The
+    release number is read from the repository, never from the archive, so a
+    stale bundle left in the tree uploads under today's version while carrying
+    yesterday's code. Passing it here is what makes the two agree.
+    """
     if not tarball.is_file():
         return [f"no tarball at {tarball}"]
 
@@ -118,6 +149,22 @@ def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
                 return ""
             handle = archive.extractfile(raw)
             return handle.read().decode("utf-8", "replace") if handle else ""
+
+        # The bundle must be the code the release claims. version-source is
+        # read from the repository, so nothing otherwise connects the number a
+        # package is uploaded under to what is inside it: an old
+        # bundle.tar.gz in the tree ships under the new version, pre-flight
+        # passes, and the deploy is only caught by the post-swap version probe
+        # — after the old service is gone.
+        source = config.version_source
+        if expect_version and source is not None and source.file:
+            member = member_name(source.file)
+            inside = version_in(source, read(member)) if member in names else None
+            if inside is not None and inside != expect_version:
+                problems.append(
+                    f"the archive's {source.file} says {inside}, but this would upload as "
+                    f"{expect_version} — the bundle is stale; rebuild it"
+                )
 
         # Layout. A nested archive (myservice/entrypoint) fails on the platform
         # with a bare "No entrypoint found", so the root is checked explicitly.
@@ -203,8 +250,13 @@ def check(tarball: Path, config: AppConfig, db_name: str | None) -> list[str]:
     return problems
 
 
-def require(tarball: Path, config: AppConfig, db_name: str | None) -> None:
+def require(
+    tarball: Path,
+    config: AppConfig,
+    db_name: str | None,
+    expect_version: str | None = None,
+) -> None:
     """Raise with every problem at once, or return quietly."""
-    problems = check(tarball, config, db_name)
+    problems = check(tarball, config, db_name, expect_version)
     if problems:
         raise DeployError("pre-flight failed:\n  - " + "\n  - ".join(problems))
